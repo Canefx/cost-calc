@@ -7,8 +7,8 @@
   var SCHEME_KEY = "cost_calc_schemes_v1";
 
   // 版本号：三个文件必须同版本，否则功能会缺失
-  var APP_VERSION = "1.5.0";
-  var CALC_VERSION = "1.5.0";
+  var APP_VERSION = "1.5.1";
+  var CALC_VERSION = "1.5.1";
 
   // 档位以「上限 + 运费」存储，起点由上一档上限推导
   var tiers = [];
@@ -64,6 +64,7 @@
     $("tierList").innerHTML = html;
 
     $("tierList").querySelectorAll("[data-tier-max]").forEach(function (el) {
+      stopWheel(el);
       el.addEventListener("input", function () {
         tiers[+el.getAttribute("data-tier-max")].max = el.value;
         renderTiers(); // 起点随上一档变化，需重绘
@@ -71,11 +72,21 @@
       });
     });
     $("tierList").querySelectorAll("[data-tier-fee]").forEach(function (el) {
+      stopWheel(el);
       el.addEventListener("input", function () {
         tiers[+el.getAttribute("data-tier-fee")].fee = el.value;
         render();
       });
     });
+  }
+
+  /** 禁止鼠标滚轮改动数字输入框的值（滚轮只用于滚动页面） */
+  function stopWheel(el) {
+    if (!el || typeof el.addEventListener !== "function") return;
+    el.addEventListener("wheel", function (e) {
+      if (e && typeof e.preventDefault === "function") e.preventDefault();
+      if (typeof el.blur === "function") el.blur();
+    }, { passive: false });
   }
 
   /** 把「上限+运费」转成 calc 需要的 {min,max,fee} 并校验 */
@@ -721,6 +732,16 @@
   /* ---------------- 初始化 ---------------- */
   function init() {
     checkVersion();
+
+    // 所有数字输入框禁用滚轮改值，避免滚动页面时误改参数
+    [
+      "unitWeight", "baseCost", "count",
+      "casePacks", "caseWeight", "caseCost",
+      "salePrice", "unitPrice",
+      "ratePlatform", "rateBlack", "rateSubsidy", "rateAccrual", "rateRefund",
+      "profitCost"
+    ].forEach(function (id) { stopWheel($(id)); });
+
     restoreLast();
     renderTiers();
     renderSchemeOptions();
