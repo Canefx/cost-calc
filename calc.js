@@ -10,7 +10,7 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  var VERSION = "1.7.1";
+  var VERSION = "1.8.0";
   var EPS = 1e-9;
 
   var DEFAULT_TIERS = [
@@ -374,9 +374,26 @@
         settlement: settlement,
         profitRate: profitRate,
         breakEvenRoi: roi,
+        breakEvenPrice: cost * (1 + rate),
+        targetRate: num(input.targetRate) > 0 ? num(input.targetRate) / 100 : null,
+        targetPrice: num(input.targetRate) > 0
+          ? targetPriceOf(cost, rate, num(input.targetRate) / 100)
+          : null,
         loss: profitRate != null && profitRate < 0
       };
     });
+  }
+
+  /** 反推售价：要达到利润率 p，售价应为多少
+   *  由 结算价 = 售价 − 成本×费比、利润率 = (结算价 − 成本) ÷ 结算价 推得
+   *  售价 = 成本 × (1 + 费比 − p×费比) ÷ (1 − p)；p = 0 时即保本售价
+   */
+  function targetPriceOf(cost, totalRate, profitRate) {
+    if (cost == null || isNaN(cost) || cost <= 0) return null;
+    if (profitRate == null || isNaN(profitRate)) return null;
+    if (profitRate >= 1) return null; // 100% 及以上无法达到
+    var p = profitRate;
+    return cost * (1 + totalRate - p * totalRate) / (1 - p);
   }
 
   function num(v) {
@@ -427,6 +444,7 @@
     summarize: summarize,
     computeProfitRows: computeProfitRows,
     computeDiscountRows: computeDiscountRows,
+    targetPriceOf: targetPriceOf,
     discountLabel: discountLabel,
     DISCOUNTS: DISCOUNTS,
     freightDetail: freightDetail,

@@ -7,8 +7,8 @@
   var SCHEME_KEY = "cost_calc_schemes_v1";
 
   // 版本号：三个文件必须同版本，否则功能会缺失
-  var APP_VERSION = "1.7.1";
-  var CALC_VERSION = "1.7.1";
+  var APP_VERSION = "1.8.0";
+  var CALC_VERSION = "1.8.0";
 
   // 档位以「上限 + 运费」存储，起点由上一档上限推导
   var tiers = [];
@@ -205,6 +205,7 @@
   function profitInput() {
     return {
       salePrice: $("salePrice").value,
+      targetRate: $("targetRate") ? $("targetRate").value : "",
       platformRate: $("ratePlatform").value,
       blackRate: $("rateBlack").value,
       subsidyRate: $("rateSubsidy").value,
@@ -345,11 +346,25 @@
     profitCache = [{ packs: row.packs, weight: row.weight, cost: row.costWith, rows: list }];
 
     var wTxt = row.weight != null ? C.formatNum(row.weight, 3) + " kg · " : "";
+    var first = list[0];
+    // 保本售价与目标利润率反推售价
+    var target = first.targetPrice;
+    var targetTxt = target != null
+      ? m2(target) + " 元（单包 " + m2(row.packs > 0 ? target / row.packs : null) + " 元）"
+      : "—";
     $("profitBlocks").innerHTML =
       '<div class="profit-block">' +
       '<div class="profit-head">' + row.packs + " 包" +
       '<span class="sub">' + wTxt + "成本 " + m2(row.costWith) + " 元 · 原价 " +
-      m2(list[0].salePrice) + " 元（单包 " + m2(list[0].unitPrice) + " 元）</span></div>" +
+      m2(first.salePrice) + " 元（单包 " + m2(first.unitPrice) + " 元）</span></div>" +
+      '<div class="stat-row" style="padding:10px 12px;background:#fafbfd">' +
+      stat("保本售价", m2(first.breakEvenPrice) + " 元", "成本 × (1 + 合计费比 " + pct(sum.totalRate) + ")，低于此价亏损") +
+      stat("目标利润率 " + (first.targetRate != null ? pct(first.targetRate) : "未填"),
+        targetTxt,
+        first.targetRate != null
+          ? "按当前成本与费比反推；售价 = 成本 × (1 + 费比 − 利润率×费比) ÷ (1 − 利润率)"
+          : "填写目标利润率后显示需定价") +
+      "</div>" +
       '<div class="table-wrap"><table><thead><tr>' +
       "<th>折扣</th><th class=\"num\">整单价/元</th><th class=\"num\">单包价/元</th>" +
       "<th class=\"num\">结算价/元</th><th class=\"num\">利润额/元</th>" +
@@ -675,6 +690,7 @@
       caseWeight: $("caseWeight").value,
       caseCost: $("caseCost").value,
       salePrice: $("salePrice").value,
+      targetRate: $("targetRate").value,
       profitPacks: $("profitPacks").value,
       profitCost: $("profitCost").value,
       linkedPacks: linkedPacks,
@@ -716,6 +732,7 @@
     if (c.caseWeight != null) $("caseWeight").value = c.caseWeight;
     if (c.caseCost != null) $("caseCost").value = c.caseCost;
     if (c.salePrice != null) $("salePrice").value = c.salePrice;
+    if (c.targetRate != null) $("targetRate").value = c.targetRate;
     if (c.profitPacks != null) $("profitPacks").value = c.profitPacks;
     if (c.profitCost != null) $("profitCost").value = c.profitCost;
     if (c.ratePlatform != null) $("ratePlatform").value = c.ratePlatform;
@@ -834,6 +851,7 @@
         caseWeight: $("caseWeight").value,
         caseCost: $("caseCost").value,
         salePrice: $("salePrice").value,
+        targetRate: $("targetRate").value,
         profitPacks: $("profitPacks").value,
         profitCost: $("profitCost").value,
         linkedPacks: linkedPacks,
@@ -861,6 +879,7 @@
     if (raw.caseWeight != null) $("caseWeight").value = raw.caseWeight;
     if (raw.caseCost != null) $("caseCost").value = raw.caseCost;
     if (raw.salePrice != null) $("salePrice").value = raw.salePrice;
+    if (raw.targetRate != null) $("targetRate").value = raw.targetRate;
     if (raw.profitPacks != null) $("profitPacks").value = raw.profitPacks;
     if (raw.profitCost != null) $("profitCost").value = raw.profitCost;
     if (raw.linkedPacks != null) linkedPacks = raw.linkedPacks;
@@ -883,7 +902,7 @@
     [
       "unitWeight", "baseCost", "count",
       "casePacks", "caseWeight", "caseCost",
-      "salePrice", "profitPacks", "profitCost",
+      "salePrice", "profitPacks", "profitCost", "targetRate",
       "ratePlatform", "rateBlack", "rateSubsidy", "rateAccrual", "rateRefund"
     ].forEach(function (id) { stopWheel($(id)); });
 
@@ -900,7 +919,7 @@
     });
     $("stackEnabled").addEventListener("change", render);
     // 利润测算：输入只做「有改动」标记，点「确定测算」才重算
-    ["salePrice", "ratePlatform", "rateBlack", "rateSubsidy", "rateAccrual", "rateRefund"].forEach(function (id) {
+    ["salePrice", "targetRate", "ratePlatform", "rateBlack", "rateSubsidy", "rateAccrual", "rateRefund"].forEach(function (id) {
       $(id).addEventListener("input", markProfitDirty);
     });
     // 手动改包数或成本 → 解除明细行联动，进入独立测算

@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="app-version" content="1.7.1">
+<meta name="app-version" content="1.8.0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>包装成本测算系统</title>
 <style>
@@ -296,6 +296,9 @@
       </label>
       <label class="field">售卖价（整单，元）
         <input id="salePrice" type="number" step="0.01" min="0" placeholder="如 39.90">
+      </label>
+      <label class="field">目标利润率（%）
+        <input id="targetRate" type="number" step="0.01" min="0" max="99" placeholder="如 30，反推售价">
       </label>
       <label class="field">平台扣点（%）
         <input id="ratePlatform" type="number" step="0.01" min="0" value="5">
