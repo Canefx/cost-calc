@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="app-version" content="1.6.0">
+<meta name="app-version" content="1.6.1">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>包装成本测算系统</title>
 <style>
@@ -208,7 +208,7 @@
   <section class="card">
     <h2>测算明细</h2>
     <div class="hint" style="margin-bottom:10px">
-      重量不超过运费最高档时按该档计费；超过时每段不超过最高档，逐段计费后累加，具体拆分见「运费明细」列。
+      重量不超过运费最高档时按该档计费；超过时每段不超过最高档，逐段计费后累加。
     </div>
     <div class="table-wrap">
       <table>
@@ -220,7 +220,6 @@
             <th class="num">整箱成本/元</th>
             <th class="num">散包成本/元</th>
             <th class="num">运费合计/元</th>
-            <th>运费明细</th>
             <th class="num">成本/含快递费</th>
             <th class="num">成本/不含快递费</th>
             <th class="num">单包成本/含快递费</th>
@@ -238,29 +237,18 @@
   </section>
 
   <!-- 利润测算 -->
+  <!-- 利润测算 -->
   <section class="card">
-    <h2>利润测算 <span class="tag">可多选包数，含各折扣测算</span></h2>
-    <div class="field" style="margin-bottom:12px">
-      <span style="font-size:13px;color:#46525f">测算包数（可多选）</span>
-      <div id="profitPacks" class="pack-pick"></div>
-      <div class="toolbar" style="margin-top:8px">
-        <button class="ghost small" onclick="pickAllPacks()">全选</button>
-        <button class="ghost small" onclick="pickBestPack()">仅选最优包数</button>
-        <button class="ghost small" onclick="pickClearPacks()">清空</button>
-      </div>
-    </div>
+    <h2>利润测算 <span class="tag">选一个包数，含各折扣测算</span></h2>
     <div class="fields">
-      <label class="field">计价方式
-        <select id="priceMode">
-          <option value="total">按整单报价</option>
-          <option value="unit">按单包报价</option>
-        </select>
+      <label class="field">测算包数
+        <select id="profitPacks"></select>
       </label>
-      <label class="field" id="salePriceField">售卖价（整单，元）
+      <label class="field">该包数成本（含快递费，元）
+        <input id="profitCost" readonly placeholder="自动带出">
+      </label>
+      <label class="field">售卖价（整单，元）
         <input id="salePrice" type="number" step="0.01" min="0" placeholder="如 39.90">
-      </label>
-      <label class="field hidden" id="unitPriceField">单包售卖价（元/包）
-        <input id="unitPrice" type="number" step="0.01" min="0" placeholder="如 1.99">
       </label>
       <label class="field">平台扣点（%）
         <input id="ratePlatform" type="number" step="0.01" min="0" value="5">
