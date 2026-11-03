@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>包装成本测算系统</title>
+<style>
+  :root {
+    --bg: #f4f6f9;
+    --card: #ffffff;
+    --line: #e4e9f0;
+    --ink: #222;
+    --muted: #7b8794;
+    --brand: #2c3e50;
+    --accent: #2d7ff9;
+    --ok: #27ae60;
+    --warn: #e67e22;
+    --danger: #e74c3c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+    margin: 0; background: var(--bg); color: var(--ink); font-size: 14px;
+  }
+  header {
+    background: var(--brand); color: #fff; padding: 12px 20px;
+    display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;
+  }
+  header .brand { font-size: 18px; font-weight: bold; }
+  header .hdr-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  main { max-width: 1240px; margin: 18px auto 60px; padding: 0 16px; }
+  .card {
+    background: var(--card); border-radius: 8px; padding: 16px 20px;
+    margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.07);
+  }
+  .card h2 { font-size: 15px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+  .card h2 .tag {
+    font-size: 12px; font-weight: normal; color: var(--muted);
+    background: #f0f3f7; border-radius: 10px; padding: 2px 8px;
+  }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+  @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+  label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #46525f; }
+  input, select, button { font-family: inherit; font-size: 14px; }
+  input, select {
+    padding: 7px 9px; border: 1px solid #cfd8e3; border-radius: 5px; background: #fff; color: var(--ink);
+  }
+  input:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(45,127,249,.15); }
+  input[readonly] { background: #f5f7fa; color: var(--muted); }
+  button {
+    background: var(--accent); color: #fff; border: none; border-radius: 5px;
+    padding: 8px 13px; cursor: pointer;
+  }
+  button:hover { filter: brightness(1.06); }
+  button.secondary { background: #94a3b1; }
+  button.ghost { background: #eef2f7; color: #46525f; }
+  button.danger { background: var(--danger); }
+  button.small { padding: 4px 9px; font-size: 13px; }
+  .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+  .hint { color: var(--muted); font-size: 12px; line-height: 1.6; }
+  .err { color: var(--danger); font-size: 13px; margin-top: 8px; min-height: 1em; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+  th { background: #f0f3f7; font-weight: 600; font-size: 13px; color: #46525f; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tbody tr:hover { background: #f7fafd; }
+  tr.best { background: #eaf7ef !important; }
+  tr.best td { font-weight: 600; }
+  tr.over td { color: #aab4bf; }
+  .badge {
+    display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 9px;
+    background: var(--ok); color: #fff; margin-left: 6px; vertical-align: 1px;
+  }
+  .badge.warn { background: var(--warn); }
+  .table-wrap { overflow-x: auto; }
+  .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+  .stat { background: #f7fafd; border: 1px solid var(--line); border-radius: 7px; padding: 12px 14px; }
+  .stat .k { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+  .stat .v { font-size: 20px; font-weight: bold; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .stat .v.small { font-size: 16px; color: var(--ink); }
+  .stat .s { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .tier-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+  .tier-row .range { min-width: 150px; color: #46525f; font-size: 13px; }
+  .tier-row input { width: 92px; }
+  #chartSvg { width: 100%; height: auto; display: block; }
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; padding: 10px 0 30px; }
+  @media print {
+    header, .no-print { display: none !important; }
+    body { background: #fff; }
+    .card { box-shadow: none; border: 1px solid #ddd; page-break-inside: avoid; }
+    main { max-width: none; margin: 0; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">包装成本测算系统</div>
+  <div class="hdr-tools no-print">
+    <input id="schemeName" placeholder="方案名称，如：A款-0.128kg" style="width:190px">
+    <button onclick="saveScheme()">保存方案</button>
+    <select id="schemeSelect" onchange="loadScheme(this.value)" style="min-width:170px">
+      <option value="">— 选择已保存方案 —</option>
+    </select>
+    <button class="ghost" onclick="deleteScheme()">删除</button>
+  </div>
+</header>
+
+<main>
+  <div class="grid2">
+    <!-- 测算参数 -->
+    <section class="card">
+      <h2>测算参数 <span class="tag">对应表格「多包」</span></h2>
+      <div class="fields">
+        <label class="field">单包克重（kg/包）
+          <input id="unitWeight" type="number" step="0.001" min="0" value="0.128">
+        </label>
+        <label class="field">单包成本（不含快递费，元）
+          <input id="baseCost" type="number" step="0.0001" min="0" value="1.14">
+        </label>
+        <label class="field">测算包数上限
+          <input id="count" type="number" step="1" min="1" max="500" value="20">
+        </label>
+      </div>
+      <label class="field" style="flex-direction:row;align-items:center;gap:8px;margin-top:12px">
+        <input id="stackEnabled" type="checkbox" checked style="width:16px;height:16px;padding:0;margin:0">
+        <span>超过整箱包数时，按整箱成本叠加计算（整箱 × k + 散包）</span>
+      </label>
+      <div class="hint" style="margin-top:10px">
+        整箱以内：含快递成本 = 单包成本 × 包数 + 档位运费。<br>
+        超过整箱包数：包数 = 整箱包数 × k + 剩余散包；整箱部分按整箱含快递成本计价，散包部分按单包成本 + 档位运费，两者叠加后再除以总包数。
+      </div>
+      <div id="paramErr" class="err"></div>
+    </section>
+
+    <!-- 运费档位 -->
+    <section class="card">
+      <h2>运费档位 <span class="tag">重量阶梯</span></h2>
+      <div id="tierList"></div>
+      <div class="toolbar" style="margin-top:6px">
+        <button class="ghost small" onclick="addTier()">+ 增加档位</button>
+        <button class="ghost small" onclick="resetTiers()">恢复默认档位</button>
+      </div>
+      <div class="hint" style="margin-top:8px">
+        区间为「起点 ≤ 重量 &lt; 上限」。超过最后一档上限的重量视为超限，不参与计算（表格中显示“超过3kg”）。
+      </div>
+      <div id="tierErr" class="err"></div>
+    </section>
+  </div>
+
+  <!-- 整箱反算 -->
+  <section class="card">
+    <h2>整箱反算 <span class="tag">对应表格「整箱费用」</span></h2>
+    <div class="fields">
+      <label class="field">整箱包数
+        <input id="casePacks" type="number" step="1" min="1" value="20">
+      </label>
+      <label class="field">整箱克重（kg）
+        <input id="caseWeight" type="number" step="0.001" min="0" value="2.56">
+      </label>
+      <label class="field">整箱成本（含快递费，元）
+        <input id="caseCost" type="number" step="0.01" min="0" value="24.12">
+      </label>
+      <label class="field">操作
+        <button onclick="applyCase()">应用到测算参数</button>
+      </label>
+    </div>
+    <div id="caseOut" class="stat-row" style="margin-top:12px"></div>
+    <div id="caseErr" class="err"></div>
+  </section>
+
+  <!-- 结论 -->
+  <section class="card">
+    <h2>测算结论</h2>
+    <div id="summaryRow" class="stat-row"></div>
+  </section>
+
+  <!-- 走势图 -->
+  <section class="card no-print">
+    <h2>单包成本走势 <span class="tag">含快递费</span></h2>
+    <svg id="chartSvg" viewBox="0 0 760 260" preserveAspectRatio="xMidYMid meet" role="img" aria-label="单包成本随包数变化走势"></svg>
+  </section>
+
+  <!-- 明细表 -->
+  <section class="card">
+    <h2>测算明细</h2>
+    <div class="hint" style="margin-bottom:10px">
+      「计价方式」为「整箱×k + 散r包」的行表示已按整箱成本叠加；「整箱成本」为该行整箱部分合计，「散包成本」为剩余散包的商品成本 + 其运费。
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="num">包数</th>
+            <th class="num">克重/kg</th>
+            <th>计价方式</th>
+            <th class="num">整箱成本/元</th>
+            <th class="num">散包成本/元</th>
+            <th class="num">运费合计/元</th>
+            <th class="num">成本/含快递费</th>
+            <th class="num">成本/不含快递费</th>
+            <th class="num">单包成本/含快递费</th>
+            <th class="num">单包成本/不含快递费</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="toolbar no-print" style="margin-top:14px">
+      <button onclick="exportCsv()">导出 CSV</button>
+      <button class="secondary" onclick="exportExcel()">导出 Excel</button>
+      <button class="ghost" onclick="window.print()">打印 / 存 PDF</button>
+    </div>
+  </section>
+</main>
+
+<footer>数据保存在本机浏览器，不上传服务器 · 逻辑依据「成本测算.xlsx」</footer>
+
+<script src="calc.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
