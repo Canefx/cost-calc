@@ -7,14 +7,15 @@
   var SCHEME_KEY = "cost_calc_schemes_v1";
 
   // 版本号：三个文件必须同版本，否则功能会缺失
-  var APP_VERSION = "1.6.2";
-  var CALC_VERSION = "1.6.2";
+  var APP_VERSION = "1.7.0";
+  var CALC_VERSION = "1.7.0";
 
   // 档位以「上限 + 运费」存储，起点由上一档上限推导
   var tiers = [];
   var rowsCache = [];
   var profitCache = [];
-  var profitPacksPicked = false;
+  // linkedPacks：点击测算明细行后联动的包数；null 表示独立测算（手动填包数与成本）
+  var linkedPacks = null;
   var lastProfitInput = "";
   var bestPacks = null;
 
@@ -208,7 +209,8 @@
       blackRate: $("rateBlack").value,
       subsidyRate: $("rateSubsidy").value,
       accrualRate: $("rateAccrual").value,
-      refundRate: $("rateRefund").value
+      refundRate: $("rateRefund").value,
+      profitCost: $("profitCost") ? $("profitCost").value : ""
     };
   }
 
@@ -224,6 +226,27 @@
     var btn = $("profitRun");
     if (!btn) return;
     btn.textContent = profitSnapshot() !== lastProfitInput ? "确定测算（输入有改动）" : "确定测算";
+  }
+
+  /** 更新联动状态提示文字 */
+  function renderLinkState() {
+    var el = $("profitLink");
+    if (!el) return;
+    el.textContent = linkedPacks != null
+      ? "已联动明细 " + linkedPacks + " 包行：成本测算变化会自动同步"
+      : "独立测算：包数与成本手动填写";
+  }
+
+  /** 点击测算明细某一行：带入该行包数与成本，并保持联动 */
+  function pickRowFromCost(n) {
+    var row = (rowsCache || []).filter(function (r) { return r.packs === n && !r.over; })[0];
+    if (!row) return;
+    linkedPacks = n;
+    $("profitPacks").value = String(n);
+    $("profitCost").value = C.money(row.costWith, 2);
+    renderTable(rowsCache, null);
+    renderLinkState();
+    renderProfit(rowsCache);
   }
 
   /** 「确定测算」按钮：点击后才按当前输入重新测算 */
@@ -248,32 +271,39 @@
       return;
     }
 
+    // 联动模式：所选行仍在可算范围内时，同步该行的最新成本
+    if (linkedPacks != null) {
+      var linked = (rows || []).filter(function (r) { return r.packs === linkedPacks && !r.over; })[0];
+      if (linked) {
+        $("profitPacks").value = String(linkedPacks);
+        $("profitCost").value = C.money(linked.costWith, 2);
+      } else {
+        // 该包数已不可算：解除联动，保留输入框当前值让用户自行处理
+        linkedPacks = null;
+        renderLinkState();
+        renderTable(rowsCache, null);
+      }
+    }
+
+    var packs = parseInt($("profitPacks").value, 10);
+    var cost = parseFloat($("profitCost").value);
     var valid = (rows || []).filter(function (r) { return !r.over; });
-    if (!valid.length) {
-      $("profitPacks").innerHTML = "";
-      $("profitCost").value = "";
-      $("profitBlocks").innerHTML = '<div class="stat">当前参数下没有可测算的包数</div>';
+
+    if (!(packs > 0) || isNaN(cost) || cost < 0) {
+      $("profitBlocks").innerHTML = '<div class="stat">' +
+        (valid.length
+          ? "填写测算包数与成本，或点击上方测算明细的某一行带入"
+          : "当前成本参数下没有可测算的行，可直接手动填写包数与成本") +
+        "</div>";
       $("profitNote").textContent = "";
       profitCache = [];
       return;
     }
 
-    // 包数下拉：用户选过就保留，否则跟随成本最优的包数
-    var cur = $("profitPacks").value;
-    var options = valid.map(function (r) {
-      return '<option value="' + r.packs + '">' + r.packs + " 包（" + C.formatNum(r.weight, 3) + "kg）</option>";
-    }).join("");
-    if ($("profitPacks").innerHTML !== options) $("profitPacks").innerHTML = options;
-    var keep = valid.some(function (r) { return String(r.packs) === String(cur); });
-    if (!profitPacksPicked || !keep) {
-      $("profitPacks").value = String(bestPacks != null ? bestPacks : valid[0].packs);
-    }
-
-    var packs = parseInt($("profitPacks").value, 10);
-    var row = valid.filter(function (r) { return r.packs === packs; })[0] || valid[0];
-    $("profitCost").value = C.money(row.costWith, 2);
-
-    renderProfitBlocks(row);
+    // 独立模式下按输入框构造成本行；能对上明细行时顺便带上重量
+    var matched = valid.filter(function (r) { return r.packs === packs; })[0];
+    var fakeRow = { packs: packs, costWith: cost, weight: matched ? matched.weight : null };
+    renderProfitBlocks(fakeRow);
   }
 
   /** 所选包数的折扣测算表 */
@@ -314,10 +344,11 @@
 
     profitCache = [{ packs: row.packs, weight: row.weight, cost: row.costWith, rows: list }];
 
+    var wTxt = row.weight != null ? C.formatNum(row.weight, 3) + " kg · " : "";
     $("profitBlocks").innerHTML =
       '<div class="profit-block">' +
       '<div class="profit-head">' + row.packs + " 包" +
-      '<span class="sub">' + C.formatNum(row.weight, 3) + " kg · 成本 " + m2(row.costWith) + " 元 · 原价 " +
+      '<span class="sub">' + wTxt + "成本 " + m2(row.costWith) + " 元 · 原价 " +
       m2(list[0].salePrice) + " 元（单包 " + m2(list[0].unitPrice) + " 元）</span></div>" +
       '<div class="table-wrap"><table><thead><tr>' +
       "<th>折扣</th><th class=\"num\">整单价/元</th><th class=\"num\">单包价/元</th>" +
@@ -353,13 +384,15 @@
   function renderTable(rows, s) {
     var html = rows.map(function (r) {
       var cls = r.over ? "over" : (bestPacks === r.packs ? "best" : "");
+      if (linkedPacks === r.packs) cls = (cls ? cls + " " : "") + "picked";
       var mark = bestPacks === r.packs ? '<span class="badge">最低</span>' : "";
+      if (linkedPacks === r.packs) mark += '<span class="badge warn">已带入</span>';
       var isStack = r.mode === "stack";
       var modeTxt = isStack
         ? '<span class="badge warn">' + esc(r.tier) + "</span>"
         : esc(r.tier);
       return (
-        "<tr class=\"" + cls + "\">" +
+        '<tr class="' + cls + '"' + (r.over ? "" : ' onclick="pickRowFromCost(' + r.packs + ')" title="点击把该行包数与成本带入利润测算"') + ">" +
         '<td class="num">' + r.packs + mark + "</td>" +
         '<td class="num">' + C.formatNum(r.weight, 3) + "</td>" +
         "<td>" + (r.over ? '<span class="badge warn">' + C.OVER_LIMIT_TEXT + "</span>" : modeTxt) + "</td>" +
@@ -642,6 +675,9 @@
       caseWeight: $("caseWeight").value,
       caseCost: $("caseCost").value,
       salePrice: $("salePrice").value,
+      profitPacks: $("profitPacks").value,
+      profitCost: $("profitCost").value,
+      linkedPacks: linkedPacks,
       ratePlatform: $("ratePlatform").value,
       rateBlack: $("rateBlack").value,
       rateSubsidy: $("rateSubsidy").value,
@@ -680,6 +716,8 @@
     if (c.caseWeight != null) $("caseWeight").value = c.caseWeight;
     if (c.caseCost != null) $("caseCost").value = c.caseCost;
     if (c.salePrice != null) $("salePrice").value = c.salePrice;
+    if (c.profitPacks != null) $("profitPacks").value = c.profitPacks;
+    if (c.profitCost != null) $("profitCost").value = c.profitCost;
     if (c.ratePlatform != null) $("ratePlatform").value = c.ratePlatform;
     if (c.rateBlack != null) $("rateBlack").value = c.rateBlack;
     if (c.rateSubsidy != null) $("rateSubsidy").value = c.rateSubsidy;
@@ -689,7 +727,9 @@
       tiers = c.tiers.map(function (t) { return { max: t.max, fee: t.fee }; });
     }
     $("schemeName").value = name;
-    profitPacksPicked = false; // 换方案后包数回到自动最优
+    // 换方案后解除明细行联动，回到独立测算
+    linkedPacks = null;
+    renderLinkState();
     renderTiers();
     renderCase();
     render();
@@ -728,6 +768,9 @@
         caseWeight: $("caseWeight").value,
         caseCost: $("caseCost").value,
         salePrice: $("salePrice").value,
+        profitPacks: $("profitPacks").value,
+        profitCost: $("profitCost").value,
+        linkedPacks: linkedPacks,
         ratePlatform: $("ratePlatform").value,
         rateBlack: $("rateBlack").value,
         rateSubsidy: $("rateSubsidy").value,
@@ -752,6 +795,9 @@
     if (raw.caseWeight != null) $("caseWeight").value = raw.caseWeight;
     if (raw.caseCost != null) $("caseCost").value = raw.caseCost;
     if (raw.salePrice != null) $("salePrice").value = raw.salePrice;
+    if (raw.profitPacks != null) $("profitPacks").value = raw.profitPacks;
+    if (raw.profitCost != null) $("profitCost").value = raw.profitCost;
+    if (raw.linkedPacks != null) linkedPacks = raw.linkedPacks;
     if (raw.ratePlatform != null) $("ratePlatform").value = raw.ratePlatform;
     if (raw.rateBlack != null) $("rateBlack").value = raw.rateBlack;
     if (raw.rateSubsidy != null) $("rateSubsidy").value = raw.rateSubsidy;
@@ -770,7 +816,7 @@
     [
       "unitWeight", "baseCost", "count",
       "casePacks", "caseWeight", "caseCost",
-      "salePrice",
+      "salePrice", "profitPacks", "profitCost",
       "ratePlatform", "rateBlack", "rateSubsidy", "rateAccrual", "rateRefund"
     ].forEach(function (id) { stopWheel($(id)); });
 
@@ -790,9 +836,16 @@
     ["salePrice", "ratePlatform", "rateBlack", "rateSubsidy", "rateAccrual", "rateRefund"].forEach(function (id) {
       $(id).addEventListener("input", markProfitDirty);
     });
-    $("profitPacks").addEventListener("change", function () {
-      profitPacksPicked = true;
-      markProfitDirty();
+    // 手动改包数或成本 → 解除明细行联动，进入独立测算
+    ["profitPacks", "profitCost"].forEach(function (id) {
+      $(id).addEventListener("input", function () {
+        if (linkedPacks != null) {
+          linkedPacks = null;
+          renderLinkState();
+          renderTable(rowsCache, null);
+        }
+        markProfitDirty();
+      });
     });
 
     // 暴露给内联 onclick
@@ -800,6 +853,7 @@
     window.removeTier = removeTier;
     window.resetTiers = resetTiers;
     window.applyCase = applyCase;
+    window.pickRowFromCost = pickRowFromCost;
     window.runProfit = runProfit;
     window.saveScheme = saveScheme;
     window.loadScheme = loadScheme;
@@ -811,6 +865,7 @@
 
     renderCase();
     render();
+    renderLinkState();
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
