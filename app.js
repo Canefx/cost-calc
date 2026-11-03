@@ -7,8 +7,8 @@
   var SCHEME_KEY = "cost_calc_schemes_v1";
 
   // 版本号：三个文件必须同版本，否则功能会缺失
-  var APP_VERSION = "1.7.0";
-  var CALC_VERSION = "1.7.0";
+  var APP_VERSION = "1.7.1";
+  var CALC_VERSION = "1.7.1";
 
   // 档位以「上限 + 运费」存储，起点由上一档上限推导
   var tiers = [];
@@ -755,6 +755,72 @@
     if (list.some(function (s) { return s.name === cur; })) sel.value = cur;
   }
 
+  /* ---------------- 区域折叠 ---------------- */
+  var FOLD_KEY = "cost_calc_fold_v1";
+  var SECTION_IDS = ["sec-params", "sec-tiers", "sec-case", "sec-summary", "sec-chart", "sec-detail", "sec-profit"];
+
+  function readFold() {
+    try {
+      var v = JSON.parse(localStorage.getItem(FOLD_KEY) || "null");
+      return v && typeof v === "object" ? v : {};
+    } catch (e) { return {}; }
+  }
+
+  function writeFold(o) {
+    try { localStorage.setItem(FOLD_KEY, JSON.stringify(o)); } catch (e) { /* 隐私模式忽略 */ }
+  }
+
+  function isCollapsed(id) {
+    var el = $(id);
+    return !!el && (" " + el.className + " ").indexOf(" collapsed ") >= 0;
+  }
+
+  function setCollapsed(id, collapsed) {
+    var el = $(id);
+    if (!el) return;
+    if (collapsed && !isCollapsed(id)) el.className = (el.className + " collapsed").trim();
+    if (!collapsed && isCollapsed(id)) {
+      el.className = el.className.replace(/\bcollapsed\b/g, "").replace(/\s+/g, " ").trim();
+    }
+  }
+
+  /** 点击卡片标题：切换收起/展开，并记住状态 */
+  function toggleSection(id) {
+    var next = !isCollapsed(id);
+    setCollapsed(id, next);
+    var fold = readFold();
+    fold[id] = next;
+    writeFold(fold);
+    updateFoldAllBtn();
+  }
+
+  /** 顶部按钮：有任一展开 → 全部收起；否则全部展开 */
+  function toggleAllSections() {
+    var anyOpen = SECTION_IDS.some(function (id) { return !isCollapsed(id); });
+    var fold = {};
+    SECTION_IDS.forEach(function (id) {
+      setCollapsed(id, anyOpen);
+      fold[id] = anyOpen;
+    });
+    writeFold(fold);
+    updateFoldAllBtn();
+  }
+
+  function updateFoldAllBtn() {
+    var btn = $("foldAllBtn");
+    if (!btn) return;
+    btn.textContent = SECTION_IDS.some(function (id) { return !isCollapsed(id); }) ? "收起全部" : "展开全部";
+  }
+
+  /** 初始化折叠状态：优先用上次记忆，无记忆时保持页面默认 */
+  function initFold() {
+    var fold = readFold();
+    SECTION_IDS.forEach(function (id) {
+      setCollapsed(id, id in fold ? !!fold[id] : isCollapsed(id));
+    });
+    updateFoldAllBtn();
+  }
+
   /* ---------------- 本地记忆 ---------------- */
   function persistLast(params) {
     try {
@@ -811,6 +877,7 @@
   /* ---------------- 初始化 ---------------- */
   function init() {
     checkVersion();
+    initFold();
 
     // 所有数字输入框禁用滚轮改值，避免滚动页面时误改参数
     [
@@ -855,6 +922,8 @@
     window.applyCase = applyCase;
     window.pickRowFromCost = pickRowFromCost;
     window.runProfit = runProfit;
+    window.toggleSection = toggleSection;
+    window.toggleAllSections = toggleAllSections;
     window.saveScheme = saveScheme;
     window.loadScheme = loadScheme;
     window.deleteScheme = deleteScheme;

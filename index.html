@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="app-version" content="1.7.0">
+<meta name="app-version" content="1.7.1">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>包装成本测算系统</title>
 <style>
@@ -88,6 +88,15 @@
   .tier-row input { width: 92px; }
   #chartSvg { width: 100%; height: auto; display: block; }
   .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  /* 折叠卡片 */
+  .card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+  .card-head h2 { margin: 0; }
+  .card-head:hover h2 { color: var(--accent); }
+  .fold-arrow { color: var(--muted); font-size: 13px; line-height: 1; transition: transform 0.15s; flex: none; }
+  .card-head:hover .fold-arrow { color: var(--accent); }
+  .card.collapsed { padding-bottom: 12px; }
+  .card.collapsed .fold-arrow { transform: rotate(-90deg); }
+  .card.collapsed .card-body { display: none; }
   .version-warn {
     background: #fdecea; color: #c0392b; border-bottom: 1px solid #f5c2c0;
     padding: 10px 20px; font-size: 13px; line-height: 1.6;
@@ -113,6 +122,7 @@
     header, .no-print { display: none !important; }
     body { background: #fff; }
     .card { box-shadow: none; border: 1px solid #ddd; page-break-inside: avoid; }
+    .card.collapsed .card-body { display: block !important; } /* 打印时全部展开 */
     main { max-width: none; margin: 0; }
   }
 </style>
@@ -121,6 +131,7 @@
 <header>
   <div class="brand">包装成本测算系统</div>
   <div class="hdr-tools no-print">
+    <button id="foldAllBtn" class="ghost" onclick="toggleAllSections()">收起全部</button>
     <input id="schemeName" placeholder="方案名称，如：A款-0.128kg" style="width:190px">
     <button onclick="saveScheme()">保存方案</button>
     <select id="schemeSelect" onchange="loadScheme(this.value)" style="min-width:170px">
@@ -135,8 +146,12 @@
 <main>
   <div class="grid2">
     <!-- 测算参数 -->
-    <section class="card">
+  <section class="card" id="sec-params">
+    <div class="card-head" onclick="toggleSection('sec-params')">
       <h2>测算参数 <span class="tag">对应表格「多包」</span></h2>
+      <span class="fold-arrow">&#9662;</span>
+    </div>
+    <div class="card-body">
       <div class="fields">
         <label class="field">单包克重（kg/包）
           <input id="unitWeight" type="number" step="0.001" min="0" value="0.128">
@@ -157,11 +172,16 @@
         超过整箱包数：包数 = 整箱包数 × k + 剩余散包；整箱部分按整箱含快递成本计价，散包部分按单包成本 + 档位运费，两者叠加后再除以总包数。
       </div>
       <div id="paramErr" class="err"></div>
-    </section>
+    </div>
+  </section>
 
     <!-- 运费档位 -->
-    <section class="card">
+  <section class="card" id="sec-tiers">
+    <div class="card-head" onclick="toggleSection('sec-tiers')">
       <h2>运费档位 <span class="tag">重量阶梯</span></h2>
+      <span class="fold-arrow">&#9662;</span>
+    </div>
+    <div class="card-body">
       <div id="tierList"></div>
       <div class="toolbar" style="margin-top:6px">
         <button class="ghost small" onclick="addTier()">+ 增加档位</button>
@@ -171,12 +191,17 @@
         区间为「起点 ≤ 重量 &lt; 上限」。超过最后一档上限的重量视为超限，不参与计算（表格中显示“超过3kg”）。
       </div>
       <div id="tierErr" class="err"></div>
-    </section>
+    </div>
+  </section>
   </div>
 
   <!-- 整箱反算 -->
-  <section class="card">
-    <h2>整箱反算 <span class="tag">对应表格「整箱费用」</span></h2>
+  <section class="card collapsed" id="sec-case">
+    <div class="card-head" onclick="toggleSection('sec-case')">
+      <h2>整箱反算 <span class="tag">对应表格「整箱费用」</span></h2>
+      <span class="fold-arrow">&#9662;</span>
+    </div>
+    <div class="card-body">
     <div class="fields">
       <label class="field">整箱包数
         <input id="casePacks" type="number" step="1" min="1" value="20">
@@ -193,23 +218,38 @@
     </div>
     <div id="caseOut" class="stat-row" style="margin-top:12px"></div>
     <div id="caseErr" class="err"></div>
+    </div>
   </section>
 
   <!-- 结论 -->
-  <section class="card">
-    <h2>测算结论</h2>
+  <section class="card" id="sec-summary">
+    <div class="card-head" onclick="toggleSection('sec-summary')">
+      <h2>测算结论</h2>
+      <span class="fold-arrow">&#9662;</span>
+    </div>
+    <div class="card-body">
     <div id="summaryRow" class="stat-row"></div>
+    </div>
   </section>
 
   <!-- 走势图 -->
-  <section class="card no-print">
-    <h2>单包成本走势 <span class="tag">含快递费</span></h2>
+  <section class="card collapsed no-print" id="sec-chart">
+    <div class="card-head" onclick="toggleSection('sec-chart')">
+      <h2>单包成本走势 <span class="tag">含快递费</span></h2>
+      <span class="fold-arrow">&#9662;</span>
+    </div>
+    <div class="card-body">
     <svg id="chartSvg" viewBox="0 0 760 260" preserveAspectRatio="xMidYMid meet" role="img" aria-label="单包成本随包数变化走势"></svg>
+    </div>
   </section>
 
   <!-- 明细表 -->
-  <section class="card">
-    <h2>测算明细</h2>
+  <section class="card" id="sec-detail">
+    <div class="card-head" onclick="toggleSection('sec-detail')">
+      <h2>测算明细</h2>
+      <span class="fold-arrow">&#9662;</span>
+    </div>
+    <div class="card-body">
     <div class="hint" style="margin-bottom:10px">
       重量不超过运费最高档时按该档计费；超过时每段不超过最高档，逐段计费后累加。<b>点击任意一行</b>，把该行的包数与成本带入下方利润测算并保持联动。
     </div>
@@ -237,11 +277,16 @@
       <button class="secondary" onclick="exportExcel()">导出 Excel</button>
       <button class="ghost" onclick="window.print()">打印 / 存 PDF</button>
     </div>
+    </div>
   </section>
 
   <!-- 利润测算 -->
-  <section class="card">
-    <h2>利润测算 <span class="tag">点明细行带入，或独立填写</span></h2>
+  <section class="card" id="sec-profit">
+    <div class="card-head" onclick="toggleSection('sec-profit')">
+      <h2>利润测算 <span class="tag">点明细行带入，或独立填写</span></h2>
+      <span class="fold-arrow">&#9662;</span>
+    </div>
+    <div class="card-body">
     <div class="fields">
       <label class="field">测算包数（包）
         <input id="profitPacks" type="number" step="1" min="1" placeholder="如 20">
@@ -277,6 +322,7 @@
     <div class="toolbar no-print" style="margin-top:14px">
       <button onclick="exportProfitCsv()">导出利润测算 CSV</button>
       <button class="secondary" onclick="exportProfitExcel()">导出利润测算 Excel</button>
+    </div>
     </div>
   </section>
 </main>
