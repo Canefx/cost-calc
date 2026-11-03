@@ -2,6 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
+<meta name="app-version" content="1.4.0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>包装成本测算系统</title>
 <style>
@@ -223,8 +224,17 @@
   <section class="card">
     <h2>利润测算 <span class="tag">参考利润测算表</span></h2>
     <div class="fields">
-      <label class="field">售卖价（整单，元）
+      <label class="field">计价方式
+        <select id="priceMode">
+          <option value="total">按整单报价</option>
+          <option value="unit">按单包报价</option>
+        </select>
+      </label>
+      <label class="field" id="salePriceField">售卖价（整单，元）
         <input id="salePrice" type="number" step="0.01" min="0" placeholder="如 39.90">
+      </label>
+      <label class="field hidden" id="unitPriceField">单包售卖价（元/包）
+        <input id="unitPrice" type="number" step="0.01" min="0" placeholder="如 1.99">
       </label>
       <label class="field">平台扣点（%）
         <input id="ratePlatform" type="number" step="0.01" min="0" value="5">

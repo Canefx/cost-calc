@@ -7,8 +7,8 @@
   var SCHEME_KEY = "cost_calc_schemes_v1";
 
   // 版本号：三个文件必须同版本，否则功能会缺失
-  var APP_VERSION = "1.3.0";
-  var CALC_VERSION = "1.3.0";
+  var APP_VERSION = "1.4.0";
+  var CALC_VERSION = "1.4.0";
 
   // 档位以「上限 + 运费」存储，起点由上一档上限推导
   var tiers = [];
@@ -164,6 +164,15 @@
         issues.push("页面需要 calc.js " + CALC_VERSION + "，实际加载 " + calcVer + "。");
       }
     }
+    // 页面自身版本：index.html 与脚本不同版本时可能缺少新输入框
+    var pageVer = null;
+    try {
+      var meta = document.querySelector ? document.querySelector('meta[name="app-version"]') : null;
+      if (meta) pageVer = meta.getAttribute("content");
+    } catch (e) { pageVer = null; }
+    if (pageVer && pageVer !== APP_VERSION) {
+      issues.push("index.html 版本 " + pageVer + " 与脚本 " + APP_VERSION + " 不一致。");
+    }
     var warn = $("versionWarn");
     if (warn) {
       if (issues.length) {
@@ -181,7 +190,9 @@
 
   function profitInput() {
     return {
+      priceMode: $("priceMode").value,
       salePrice: $("salePrice").value,
+      unitPrice: $("unitPrice").value,
       platformRate: $("ratePlatform").value,
       blackRate: $("rateBlack").value,
       subsidyRate: $("rateSubsidy").value,
@@ -190,9 +201,18 @@
     };
   }
 
+  /** 按计价方式切换要填的售价输入框 */
+  function applyPriceMode() {
+    var unit = $("priceMode").value === "unit";
+    $("salePriceField").className = unit ? "field hidden" : "field";
+    $("unitPriceField").className = unit ? "field" : "field hidden";
+  }
+
   function renderProfit(rows) {
     var input = profitInput();
-    var salePrice = parseFloat(input.salePrice);
+    var isUnit = input.priceMode === "unit";
+    var price = parseFloat(isUnit ? input.unitPrice : input.salePrice);
+    var hasPrice = price > 0;
 
     // calc.js 版本过旧时不抛异常，给出可操作的提示
     if (typeof C.computeProfitRows !== "function") {
@@ -209,10 +229,14 @@
     $("profitSummary").innerHTML =
       stat("含百补综合扣点", pct(sum.combinedSubsidy), "平台 + 黑标 + 百补") +
       stat("合计费比", pct(sum.totalRate), "综合扣点 + 计提费比") +
-      stat("售卖价", salePrice > 0 ? m2(salePrice) + " 元" : "未填写", salePrice > 0 ? "整单售价" : "填写售卖价后自动计算");
+      stat("当前售价", hasPrice
+        ? (isUnit ? m2(price) + " 元/包" : m2(price) + " 元/单")
+        : "未填写",
+        hasPrice ? (isUnit ? "整单价 = 单包价 × 包数" : "整单售价") : "填写后自动计算");
 
-    if (!(salePrice > 0)) {
-      $("profitRows").innerHTML = '<tr><td colspan="13" class="hint">请在上方填写售卖价（整单，元）</td></tr>';
+    if (!hasPrice) {
+      $("profitRows").innerHTML = '<tr><td colspan="13" class="hint">请先填写' +
+        (isUnit ? "单包售卖价（元/包）" : "整单售卖价（元）") + "</td></tr>";
       profitCache = [];
       return;
     }
@@ -547,7 +571,9 @@
       casePacks: $("casePacks").value,
       caseWeight: $("caseWeight").value,
       caseCost: $("caseCost").value,
+      priceMode: $("priceMode").value,
       salePrice: $("salePrice").value,
+      unitPrice: $("unitPrice").value,
       ratePlatform: $("ratePlatform").value,
       rateBlack: $("rateBlack").value,
       rateSubsidy: $("rateSubsidy").value,
@@ -585,7 +611,9 @@
     if (c.casePacks != null) $("casePacks").value = c.casePacks;
     if (c.caseWeight != null) $("caseWeight").value = c.caseWeight;
     if (c.caseCost != null) $("caseCost").value = c.caseCost;
+    if (c.priceMode != null) $("priceMode").value = c.priceMode;
     if (c.salePrice != null) $("salePrice").value = c.salePrice;
+    if (c.unitPrice != null) $("unitPrice").value = c.unitPrice;
     if (c.ratePlatform != null) $("ratePlatform").value = c.ratePlatform;
     if (c.rateBlack != null) $("rateBlack").value = c.rateBlack;
     if (c.rateSubsidy != null) $("rateSubsidy").value = c.rateSubsidy;
@@ -632,7 +660,9 @@
         casePacks: $("casePacks").value,
         caseWeight: $("caseWeight").value,
         caseCost: $("caseCost").value,
+        priceMode: $("priceMode").value,
         salePrice: $("salePrice").value,
+        unitPrice: $("unitPrice").value,
         ratePlatform: $("ratePlatform").value,
         rateBlack: $("rateBlack").value,
         rateSubsidy: $("rateSubsidy").value,
@@ -656,7 +686,9 @@
     if (raw.casePacks != null) $("casePacks").value = raw.casePacks;
     if (raw.caseWeight != null) $("caseWeight").value = raw.caseWeight;
     if (raw.caseCost != null) $("caseCost").value = raw.caseCost;
+    if (raw.priceMode != null) $("priceMode").value = raw.priceMode;
     if (raw.salePrice != null) $("salePrice").value = raw.salePrice;
+    if (raw.unitPrice != null) $("unitPrice").value = raw.unitPrice;
     if (raw.ratePlatform != null) $("ratePlatform").value = raw.ratePlatform;
     if (raw.rateBlack != null) $("rateBlack").value = raw.rateBlack;
     if (raw.rateSubsidy != null) $("rateSubsidy").value = raw.rateSubsidy;
@@ -683,8 +715,12 @@
     });
     $("stackEnabled").addEventListener("change", render);
     // 利润测算参数变化只需重算利润部分
-    ["salePrice", "ratePlatform", "rateBlack", "rateSubsidy", "rateAccrual", "rateRefund"].forEach(function (id) {
+    ["salePrice", "unitPrice", "ratePlatform", "rateBlack", "rateSubsidy", "rateAccrual", "rateRefund"].forEach(function (id) {
       $(id).addEventListener("input", function () { renderProfit(rowsCache); });
+    });
+    $("priceMode").addEventListener("change", function () {
+      applyPriceMode();
+      renderProfit(rowsCache);
     });
 
     // 暴露给内联 onclick
@@ -702,6 +738,7 @@
 
     renderCase();
     render();
+    applyPriceMode();
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);

@@ -10,7 +10,7 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  var VERSION = "1.3.0";
+  var VERSION = "1.4.0";
   var EPS = 1e-9;
 
   var DEFAULT_TIERS = [
@@ -182,6 +182,9 @@
   }
 
   /** 利润测算：逐行套用参考表公式
+   *  计价方式 priceMode：
+   *    "total" 按整单报价 → 售卖价取 salePrice，单包售价 = 售卖价 ÷ 包数
+   *    "unit"  按单包报价 → 单包售价取 unitPrice，售卖价 = 单包售价 × 包数
    *  单包售价 = 售卖价 ÷ 包数
    *  含百补综合扣点 = 平台扣点 + 黑标扣点 + 百补扣点
    *  合计费比 = 含百补综合扣点 + 计提费比
@@ -191,7 +194,10 @@
    *  保本售价 = 成本 × (1 + 合计费比)
    */
   function computeProfitRows(costRows, input) {
-    var salePrice = num(input.salePrice);
+    var mode = input.priceMode === "unit" ? "unit" : "total";
+    var totalPrice = num(input.salePrice);
+    var unitPriceInput = num(input.unitPrice);
+    var hasPrice = mode === "unit" ? unitPriceInput > 0 : totalPrice > 0;
     var platform = num(input.platformRate) / 100;
     var black = num(input.blackRate) / 100;
     var subsidy = num(input.subsidyRate) / 100;
@@ -203,24 +209,31 @@
 
     return (costRows || []).map(function (r) {
       var cost = r.costWith;
+      // 每一包都按当前计价方式折算成该行的整单售价
+      var salePrice = mode === "unit" ? unitPriceInput * r.packs : totalPrice;
+      var perUnit = mode === "unit"
+        ? unitPriceInput
+        : (r.packs > 0 ? totalPrice / r.packs : null);
+
       var out = {
         packs: r.packs,
         over: !!r.over,
         cost: cost,
-        salePrice: salePrice,
+        priceMode: mode,
+        salePrice: hasPrice ? salePrice : null,
+        unitPrice: hasPrice ? perUnit : null,
         platform: platform,
         black: black,
         subsidy: subsidy,
         accrual: accrual,
         combinedSubsidy: combinedSubsidy,
         totalRate: totalRate,
-        unitPrice: salePrice > 0 ? salePrice / r.packs : null,
         settlement: null,
         profitRate: null,
         breakEvenRoi: null,
         breakEvenPrice: null
       };
-      if (cost == null || salePrice <= 0) return out;
+      if (cost == null || !hasPrice) return out;
 
       var settlement = salePrice - cost * totalRate;
       out.settlement = settlement;
