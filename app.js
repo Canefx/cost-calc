@@ -18,7 +18,6 @@
     });
   };
   var m2 = function (v) { return v == null ? "—" : C.money(v, 2); };
-  var m4 = function (v) { return v == null ? "—" : C.money(v, 4); };
 
   /* ---------------- 档位管理 ---------------- */
   function resetTiers() {
@@ -144,9 +143,9 @@
     var best = s.best;
     var html = "";
     if (best) {
-      html += stat("最低单包成本（含快递）", m4(best.perWith) + " 元", "对应 " + best.packs + " 包 / " + C.formatNum(best.weight, 3) + " kg");
+      html += stat("最低单包成本（含快递）", m2(best.perWith) + " 元", "对应 " + best.packs + " 包 / " + C.formatNum(best.weight, 3) + " kg");
       html += stat("该单总成本（含快递）", m2(best.costWith) + " 元", "其中运费 " + m2(best.fee) + " 元，档位 " + best.tier);
-      html += stat("单包成本（不含快递）", m4(params.baseCost) + " 元", "商品成本基准，与包数无关");
+      html += stat("单包成本（不含快递）", m2(params.baseCost) + " 元", "商品成本基准，与包数无关");
       html += stat("可测算包数", s.validCount + " / " + (s.validCount + s.overCount) + " 个", "上限 " + C.formatNum(s.maxValidWeight, 3) + " kg 以内可算");
     } else {
       html += stat("最低单包成本（含快递）", "—", "当前参数下没有可用包数");
@@ -177,8 +176,8 @@
         '<td class="num">' + (r.over ? "—" : m2(r.fee)) + "</td>" +
         '<td class="num">' + (r.over ? "—" : m2(r.costWith)) + "</td>" +
         '<td class="num">' + m2(r.costWithout) + "</td>" +
-        '<td class="num">' + (r.over ? "—" : m4(r.perWith)) + "</td>" +
-        '<td class="num">' + m4(r.perWithout) + "</td>" +
+        '<td class="num">' + (r.over ? "—" : m2(r.perWith)) + "</td>" +
+        '<td class="num">' + m2(r.perWithout) + "</td>" +
         "</tr>"
       );
     }).join("");
@@ -204,15 +203,22 @@
     var Y = function (v) { return PT + (1 - (v - minY) / (maxY - minY)) * (H - PT - PB); };
 
     var s = "";
-    // 横向网格 + Y 轴刻度
+    // 横向网格 + Y 轴刻度（成本统一保留两位小数；仅当刻度会重复时才补一位避免重叠）
     var g = 4;
+    var axisDigits = 2;
+    var prevLabel = null;
+    for (var t = 0; t <= g; t++) {
+      var probe = C.money(minY + (maxY - minY) * (t / g), 2);
+      if (prevLabel !== null && probe === prevLabel) { axisDigits = 3; break; }
+      prevLabel = probe;
+    }
     for (var i = 0; i <= g; i++) {
       var val = minY + (maxY - minY) * (i / g);
       var y = Y(val);
       s += '<line x1="' + PL + '" y1="' + y.toFixed(1) + '" x2="' + (W - PR) + '" y2="' + y.toFixed(1) +
         '" stroke="#eef1f5" stroke-width="1"/>';
       s += '<text x="' + (PL - 8) + '" y="' + (y + 4).toFixed(1) + '" text-anchor="end" font-size="11" fill="#8b96a3">' +
-        C.money(val, 3) + "</text>";
+        C.money(val, axisDigits) + "</text>";
     }
     // 轴
     s += '<line x1="' + PL + '" y1="' + (H - PB) + '" x2="' + (W - PR) + '" y2="' + (H - PB) + '" stroke="#cfd8e3"/>';
@@ -234,7 +240,7 @@
       var anchor = bx > W * 0.72 ? "end" : "start";
       var dx = anchor === "end" ? -10 : 10;
       s += '<text x="' + (bx + dx).toFixed(1) + '" y="' + (by - 10).toFixed(1) + '" text-anchor="' + anchor +
-        '" font-size="12" fill="#27ae60" font-weight="bold">最低 ' + C.money(best.perWith, 4) + ' 元 / ' + best.packs + ' 包</text>';
+        '" font-size="12" fill="#27ae60" font-weight="bold">最低 ' + C.money(best.perWith, 2) + ' 元 / ' + best.packs + ' 包</text>';
     }
 
     // X 轴标签（最多 8 个）
@@ -277,8 +283,8 @@
     $("caseOut").innerHTML =
       stat("命中运费档位", r.tier, "运费 " + m2(r.fee) + " 元") +
       stat("整箱成本/不含快递费", m2(r.costWithout) + " 元", "含快递 " + m2(r.costWith) + " − 运费 " + m2(r.fee)) +
-      stat("单包成本/含快递费", m4(r.perWith) + " 元", "整箱含快递 ÷ " + C.formatNum(packs, 0) + " 包") +
-      stat("单包成本/不含快递费", m4(r.perWithout) + " 元", "可直接作为测算的单包成本");
+      stat("单包成本/含快递费", m2(r.perWith) + " 元", "整箱含快递 ÷ " + C.formatNum(packs, 0) + " 包") +
+      stat("单包成本/不含快递费", m2(r.perWithout) + " 元", "可直接作为测算的单包成本");
   }
 
   function applyCase() {
@@ -318,8 +324,8 @@
         r.over ? "—" : m2(r.fee),
         r.over ? "—" : m2(r.costWith),
         m2(r.costWithout),
-        r.over ? "—" : m4(r.perWith),
-        m4(r.perWithout)
+        r.over ? "—" : m2(r.perWith),
+        m2(r.perWithout)
       ];
     });
   }

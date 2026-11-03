@@ -195,7 +195,7 @@
 
   function money(v, digits) {
     if (v == null || isNaN(v)) return "—";
-    // 单包成本保留 4 位便于比较，总成本保留 2 位
+    // 金额默认保留两位小数
     var d = digits == null ? 2 : digits;
     return Number(v).toFixed(d);
   }
