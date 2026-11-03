@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="app-version" content="1.4.0">
+<meta name="app-version" content="1.5.0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>包装成本测算系统</title>
 <style>
@@ -222,8 +222,14 @@
 
   <!-- 利润测算 -->
   <section class="card">
-    <h2>利润测算 <span class="tag">参考利润测算表</span></h2>
+    <h2>利润测算 <span class="tag">选一个包数，填售卖价</span></h2>
     <div class="fields">
+      <label class="field">测算包数
+        <select id="profitPacks"></select>
+      </label>
+      <label class="field">该包数成本（含快递费，元）
+        <input id="profitCost" readonly placeholder="自动带出">
+      </label>
       <label class="field">计价方式
         <select id="priceMode">
           <option value="total">按整单报价</option>
@@ -236,6 +242,8 @@
       <label class="field hidden" id="unitPriceField">单包售卖价（元/包）
         <input id="unitPrice" type="number" step="0.01" min="0" placeholder="如 1.99">
       </label>
+    </div>
+    <div class="fields" style="margin-top:12px">
       <label class="field">平台扣点（%）
         <input id="ratePlatform" type="number" step="0.01" min="0" value="5">
       </label>
@@ -252,36 +260,11 @@
         <input id="rateRefund" type="number" step="0.01" min="0" max="99" value="10">
       </label>
     </div>
-    <div id="profitSummary" class="stat-row" style="margin-top:12px"></div>
-    <div class="hint" style="margin-top:10px">
-      单包售价 = 售卖价 ÷ 包数；含百补综合扣点 = 平台 + 黑标 + 百补；合计费比 = 综合扣点 + 计提费比；<br>
-      结算价 = 售卖价 − 成本 × 合计费比；利润率 = (结算价 − 成本) ÷ 结算价；保本 ROI = 1 ÷ 利润率 ÷ (1 − 退款率)。
-    </div>
-    <div class="table-wrap" style="margin-top:12px">
-      <table>
-        <thead>
-          <tr>
-            <th class="num">包数</th>
-            <th class="num">成本/含快递费</th>
-            <th class="num">售卖价</th>
-            <th class="num">单包售价</th>
-            <th class="num">结算价</th>
-            <th class="num">利润率</th>
-            <th class="num">保本roi</th>
-            <th class="num">平台扣点</th>
-            <th class="num">黑标扣点</th>
-            <th class="num">百补扣点</th>
-            <th class="num">含百补综合扣点</th>
-            <th class="num">计提费比</th>
-            <th class="num">合计费比</th>
-          </tr>
-        </thead>
-        <tbody id="profitRows"></tbody>
-      </table>
-    </div>
+    <div id="profitResult" class="stat-row" style="margin-top:14px"></div>
+    <div id="profitNote" class="hint" style="margin-top:10px"></div>
     <div class="toolbar no-print" style="margin-top:14px">
-      <button onclick="exportProfitCsv()">导出利润 CSV</button>
-      <button class="secondary" onclick="exportProfitExcel()">导出利润 Excel</button>
+      <button onclick="exportProfitCsv()">导出本次测算 CSV</button>
+      <button class="secondary" onclick="exportProfitExcel()">导出本次测算 Excel</button>
     </div>
   </section>
 </main>
