@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="app-version" content="1.6.1">
+<meta name="app-version" content="1.6.2">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>包装成本测算系统</title>
 <style>
@@ -237,9 +237,8 @@
   </section>
 
   <!-- 利润测算 -->
-  <!-- 利润测算 -->
   <section class="card">
-    <h2>利润测算 <span class="tag">选一个包数，含各折扣测算</span></h2>
+    <h2>利润测算 <span class="tag">选一个包数，填好后点「确定测算」</span></h2>
     <div class="fields">
       <label class="field">测算包数
         <select id="profitPacks"></select>
@@ -265,6 +264,10 @@
       <label class="field">退款率（%）
         <input id="rateRefund" type="number" step="0.01" min="0" max="99" value="10">
       </label>
+    </div>
+    <div class="toolbar no-print" style="margin-top:12px">
+      <button id="profitRun" onclick="runProfit()">确定测算</button>
+      <span class="hint" style="align-self:center">改动输入后需点「确定测算」才会更新结果</span>
     </div>
     <div id="profitBlocks" style="margin-top:14px"></div>
     <div id="profitNote" class="hint" style="margin-top:10px"></div>

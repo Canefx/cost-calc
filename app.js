@@ -7,14 +7,15 @@
   var SCHEME_KEY = "cost_calc_schemes_v1";
 
   // 版本号：三个文件必须同版本，否则功能会缺失
-  var APP_VERSION = "1.6.1";
-  var CALC_VERSION = "1.6.1";
+  var APP_VERSION = "1.6.2";
+  var CALC_VERSION = "1.6.2";
 
   // 档位以「上限 + 运费」存储，起点由上一档上限推导
   var tiers = [];
   var rowsCache = [];
   var profitCache = [];
   var profitPacksPicked = false;
+  var lastProfitInput = "";
   var bestPacks = null;
 
   var $ = function (id) { return document.getElementById(id); };
@@ -211,7 +212,33 @@
     };
   }
 
+  /** 利润输入快照：用于判断输入是否有未应用的改动 */
+  function profitSnapshot() {
+    var o = profitInput();
+    o.packs = $("profitPacks") ? String($("profitPacks").value) : "";
+    return JSON.stringify(o);
+  }
+
+  /** 有未应用的改动时，按钮文字给出提示 */
+  function markProfitDirty() {
+    var btn = $("profitRun");
+    if (!btn) return;
+    btn.textContent = profitSnapshot() !== lastProfitInput ? "确定测算（输入有改动）" : "确定测算";
+  }
+
+  /** 「确定测算」按钮：点击后才按当前输入重新测算 */
+  function runProfit() {
+    renderProfit(rowsCache);
+  }
+
   function renderProfit(rows) {
+    renderProfitInner(rows);
+    // 本次渲染所应用的输入即成为基准；按钮提示随之刷新
+    lastProfitInput = profitSnapshot();
+    markProfitDirty();
+  }
+
+  function renderProfitInner(rows) {
     // calc.js 版本过旧时不抛异常，给出可操作的提示
     if (typeof C.computeDiscountRows !== "function" || typeof C.profitSummary !== "function") {
       $("profitBlocks").innerHTML = '<div class="stat" style="color:#c0392b">' +
@@ -759,13 +786,13 @@
       $(id).addEventListener("input", function () { renderCase(); render(); });
     });
     $("stackEnabled").addEventListener("change", render);
-    // 利润测算参数变化只需重算利润部分
+    // 利润测算：输入只做「有改动」标记，点「确定测算」才重算
     ["salePrice", "ratePlatform", "rateBlack", "rateSubsidy", "rateAccrual", "rateRefund"].forEach(function (id) {
-      $(id).addEventListener("input", function () { renderProfit(rowsCache); });
+      $(id).addEventListener("input", markProfitDirty);
     });
     $("profitPacks").addEventListener("change", function () {
       profitPacksPicked = true;
-      renderProfit(rowsCache);
+      markProfitDirty();
     });
 
     // 暴露给内联 onclick
@@ -773,6 +800,7 @@
     window.removeTier = removeTier;
     window.resetTiers = resetTiers;
     window.applyCase = applyCase;
+    window.runProfit = runProfit;
     window.saveScheme = saveScheme;
     window.loadScheme = loadScheme;
     window.deleteScheme = deleteScheme;

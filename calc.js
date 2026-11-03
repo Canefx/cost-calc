@@ -10,7 +10,7 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  var VERSION = "1.6.1";
+  var VERSION = "1.6.2";
   var EPS = 1e-9;
 
   var DEFAULT_TIERS = [
