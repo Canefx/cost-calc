@@ -10,7 +10,7 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  var VERSION = "1.5.1";
+  var VERSION = "1.6.0";
   var EPS = 1e-9;
 
   var DEFAULT_TIERS = [
@@ -52,6 +52,75 @@
     return "整箱×" + boxes + (rest > 0 ? " + 散" + rest + "包" : "");
   }
 
+  /** 运费档位里的最高上限（如 3kg）；超过它就要分段计费 */
+  function maxTierLimit(tiers) {
+    var m = 0;
+    for (var i = 0; i < tiers.length; i++) {
+      if (tiers[i].max != null && tiers[i].max > m) m = tiers[i].max;
+    }
+    return m;
+  }
+
+  /** 最后一段的重量恰好等于上限时（如整 3kg），按最高档计费 */
+  function feeForChunk(chunk, tiers, limit) {
+    if (limit > 0 && chunk + EPS >= limit) {
+      var last = null;
+      for (var i = 0; i < tiers.length; i++) {
+        if (tiers[i].max != null && (last == null || tiers[i].max > last.max)) last = tiers[i];
+      }
+      return last ? last.fee : null;
+    }
+    return freightFor(chunk, tiers);
+  }
+
+  /** 重量不超最高档 → 按档位算一次；超过 → 每段不超过最高档，逐段计费后累加
+   *  返回 { fee, over, segments:[{weight, fee}], text }
+   */
+  function freightDetail(weight, tiers) {
+    var limit = maxTierLimit(tiers);
+    if (weight == null || isNaN(weight) || weight < 0) {
+      return { fee: null, over: true, segments: [], text: OVER_LIMIT_TEXT };
+    }
+    if (weight <= EPS) return { fee: 0, over: false, segments: [], text: "0kg" };
+    if (limit <= 0) return { fee: null, over: true, segments: [], text: OVER_LIMIT_TEXT };
+
+    // 单段：不超最高档
+    if (weight < limit - EPS) {
+      var single = freightFor(weight, tiers);
+      if (single == null) return { fee: null, over: true, segments: [], text: OVER_LIMIT_TEXT };
+      return {
+        fee: single,
+        over: false,
+        segments: [{ weight: weight, fee: single }],
+        text: formatNum(weight, 3) + "kg " + money(single, 2)
+      };
+    }
+
+    // 多段：累加
+    var rest = weight;
+    var segments = [];
+    var total = 0;
+    var guard = 0;
+    while (rest > EPS && guard++ < 2000) {
+      var chunk = rest > limit ? limit : rest;
+      var fee = feeForChunk(chunk, tiers, limit);
+      if (fee == null) return { fee: null, over: true, segments: segments, text: OVER_LIMIT_TEXT };
+      segments.push({ weight: chunk, fee: fee });
+      total += fee;
+      rest = rest - chunk;
+      if (Math.abs(rest) < EPS) rest = 0;
+    }
+    var parts = segments.map(function (s) {
+      return formatNum(s.weight, 3) + "kg " + money(s.fee, 2);
+    });
+    return {
+      fee: total,
+      over: false,
+      segments: segments,
+      text: parts.join(" + ") + " = " + money(total, 2)
+    };
+  }
+
   /** 多包测算：返回每个包数的一行结果
    *  params 扩展（用于超量叠加）：
    *   stackEnabled  超过整箱包数时是否按整箱叠加
@@ -82,8 +151,11 @@
       if (boxUsable && n > boxPacks) {
         var k = Math.floor(n / boxPacks);
         var rest = n - k * boxPacks;
-        var restFee = rest > 0 ? freightFor(unitWeight * rest, tiers) : 0;
-        var restOk = !(rest > 0 && restFee == null);
+        var restDetail = rest > 0
+          ? freightDetail(unitWeight * rest, tiers)
+          : { fee: 0, over: false, segments: [], text: "—" };
+        var restFee = restDetail.fee;
+        var restOk = !restDetail.over;
         var boxCost = k * boxCostWith;
         var restGoods = baseCost * rest;
         var restCost = restGoods + (restFee == null ? 0 : restFee);
@@ -98,6 +170,9 @@
           boxCost: boxCost,
           restCost: restOk ? restCost : null,
           tier: restOk ? stackLabel(k, rest) : OVER_LIMIT_TEXT,
+          freightText: rest > 0
+            ? "整箱×" + k + " " + money(boxFee, 2) + " + 散" + rest + "包(" + restDetail.text + ")"
+            : "整箱×" + k + " " + money(boxFee, 2) + " = " + money(k * boxFee, 2),
           fee: restOk ? k * boxFee + restFee : null,
           over: !restOk,
           costWith: costWith,
@@ -108,9 +183,9 @@
         continue;
       }
 
-      // ---- 整箱以内：单票计费（原表逻辑） ----
-      var fee = freightFor(weight, tiers);
-      var over = fee == null;
+      // ---- 整箱以内：按档位计费，超过最高档则分段累加 ----
+      var detail = freightDetail(weight, tiers);
+      var over = detail.fee == null;
       var costWithoutSingle = baseCost * n;
       rows.push({
         packs: n,
@@ -119,13 +194,18 @@
         boxes: 0,
         rest: n,
         boxCost: 0,
-        restCost: over ? null : costWithoutSingle + fee,
-        tier: tierLabelFor(weight, tiers),
-        fee: fee,
+        restCost: over ? null : costWithoutSingle + detail.fee,
+        tier: over
+          ? OVER_LIMIT_TEXT
+          : (detail.segments.length > 1
+            ? detail.segments.length + " 段计费"
+            : tierLabelFor(weight, tiers)),
+        freightText: detail.text,
+        fee: detail.fee,
         over: over,
-        costWith: over ? null : costWithoutSingle + fee,
+        costWith: over ? null : costWithoutSingle + detail.fee,
         costWithout: costWithoutSingle,
-        perWith: over ? null : (costWithoutSingle + fee) / n,
+        perWith: over ? null : (costWithoutSingle + detail.fee) / n,
         perWithout: baseCost
       });
     }
@@ -259,6 +339,46 @@
     };
   }
 
+  /** 折扣档位（1 = 原价） */
+  var DISCOUNTS = [1, 0.95, 0.9, 0.88, 0.85, 0.8, 0.75, 0.7, 0.6, 0.55, 0.5];
+
+  /** 折扣文字：1 → 原价；0.95 → 9.5折；0.9 → 9折；0.88 → 8.8折 */
+  function discountLabel(rate) {
+    if (rate >= 1 - EPS) return "原价";
+    var zhe = rate * 10;
+    var s = zhe.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+    return s + "折";
+  }
+
+  /** 按折扣逐档测算：售卖价 × 各折扣后的售价与利润 */
+  function computeDiscountRows(costRow, input) {
+    var base = computeProfitRows([costRow], input)[0];
+    if (!base || base.cost == null || base.salePrice == null) return [];
+    var keep = 1 - num(input.refundRate) / 100;
+    var cost = base.cost;
+    var rate = base.totalRate;
+    var packs = base.packs;
+
+    return DISCOUNTS.map(function (d) {
+      var sale = base.salePrice * d;
+      var settlement = sale - cost * rate;
+      var profitRate = settlement > 0 ? (settlement - cost) / settlement : null;
+      var roi = (profitRate != null && profitRate > 0 && keep > 0) ? 1 / profitRate / keep : null;
+      return {
+        rate: d,
+        label: discountLabel(d),
+        packs: packs,
+        cost: cost,
+        salePrice: sale,
+        unitPrice: packs > 0 ? sale / packs : null,
+        settlement: settlement,
+        profitRate: profitRate,
+        breakEvenRoi: roi,
+        loss: profitRate != null && profitRate < 0
+      };
+    });
+  }
+
   function num(v) {
     var n = typeof v === "number" ? v : parseFloat(String(v == null ? "" : v).replace(/[^0-9.\-]/g, ""));
     return isNaN(n) ? 0 : n;
@@ -306,6 +426,11 @@
     reverseCase: reverseCase,
     summarize: summarize,
     computeProfitRows: computeProfitRows,
+    computeDiscountRows: computeDiscountRows,
+    discountLabel: discountLabel,
+    DISCOUNTS: DISCOUNTS,
+    freightDetail: freightDetail,
+    maxTierLimit: maxTierLimit,
     profitSummary: profitSummary,
     validateTiers: validateTiers,
     formatNum: formatNum,

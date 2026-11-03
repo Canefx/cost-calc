@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="app-version" content="1.5.1">
+<meta name="app-version" content="1.6.0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>包装成本测算系统</title>
 <style>
@@ -89,6 +89,22 @@
     background: #fdecea; color: #c0392b; border-bottom: 1px solid #f5c2c0;
     padding: 10px 20px; font-size: 13px; line-height: 1.6;
   }
+  .pack-pick {
+    display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px;
+    max-height: 120px; overflow-y: auto; padding: 8px 10px;
+    border: 1px solid var(--line); border-radius: 6px; background: #fafbfd;
+  }
+  .pack-pick label { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; cursor: pointer; }
+  .pack-pick input { width: 15px; height: 15px; padding: 0; margin: 0; }
+  .profit-block { border: 1px solid var(--line); border-radius: 7px; margin-bottom: 14px; overflow: hidden; }
+  .profit-head {
+    background: #f0f3f7; padding: 9px 12px; font-size: 13px; font-weight: 600; color: #33475b;
+    display: flex; flex-wrap: wrap; gap: 6px 14px;
+  }
+  .profit-head .sub { font-weight: normal; color: var(--muted); }
+  .profit-block table { font-size: 13px; }
+  .profit-block th, .profit-block td { padding: 6px 9px; }
+  tr.loss td { color: var(--danger); }
   footer { text-align: center; color: var(--muted); font-size: 12px; padding: 10px 0 30px; }
   @media print {
     header, .no-print { display: none !important; }
@@ -192,7 +208,7 @@
   <section class="card">
     <h2>测算明细</h2>
     <div class="hint" style="margin-bottom:10px">
-      「计价方式」为「整箱×k + 散r包」的行表示已按整箱成本叠加；「整箱成本」为该行整箱部分合计，「散包成本」为剩余散包的商品成本 + 其运费。
+      重量不超过运费最高档时按该档计费；超过时每段不超过最高档，逐段计费后累加，具体拆分见「运费明细」列。
     </div>
     <div class="table-wrap">
       <table>
@@ -204,6 +220,7 @@
             <th class="num">整箱成本/元</th>
             <th class="num">散包成本/元</th>
             <th class="num">运费合计/元</th>
+            <th>运费明细</th>
             <th class="num">成本/含快递费</th>
             <th class="num">成本/不含快递费</th>
             <th class="num">单包成本/含快递费</th>
@@ -222,14 +239,17 @@
 
   <!-- 利润测算 -->
   <section class="card">
-    <h2>利润测算 <span class="tag">选一个包数，填售卖价</span></h2>
+    <h2>利润测算 <span class="tag">可多选包数，含各折扣测算</span></h2>
+    <div class="field" style="margin-bottom:12px">
+      <span style="font-size:13px;color:#46525f">测算包数（可多选）</span>
+      <div id="profitPacks" class="pack-pick"></div>
+      <div class="toolbar" style="margin-top:8px">
+        <button class="ghost small" onclick="pickAllPacks()">全选</button>
+        <button class="ghost small" onclick="pickBestPack()">仅选最优包数</button>
+        <button class="ghost small" onclick="pickClearPacks()">清空</button>
+      </div>
+    </div>
     <div class="fields">
-      <label class="field">测算包数
-        <select id="profitPacks"></select>
-      </label>
-      <label class="field">该包数成本（含快递费，元）
-        <input id="profitCost" readonly placeholder="自动带出">
-      </label>
       <label class="field">计价方式
         <select id="priceMode">
           <option value="total">按整单报价</option>
@@ -242,8 +262,6 @@
       <label class="field hidden" id="unitPriceField">单包售卖价（元/包）
         <input id="unitPrice" type="number" step="0.01" min="0" placeholder="如 1.99">
       </label>
-    </div>
-    <div class="fields" style="margin-top:12px">
       <label class="field">平台扣点（%）
         <input id="ratePlatform" type="number" step="0.01" min="0" value="5">
       </label>
@@ -260,11 +278,11 @@
         <input id="rateRefund" type="number" step="0.01" min="0" max="99" value="10">
       </label>
     </div>
-    <div id="profitResult" class="stat-row" style="margin-top:14px"></div>
+    <div id="profitBlocks" style="margin-top:14px"></div>
     <div id="profitNote" class="hint" style="margin-top:10px"></div>
     <div class="toolbar no-print" style="margin-top:14px">
-      <button onclick="exportProfitCsv()">导出本次测算 CSV</button>
-      <button class="secondary" onclick="exportProfitExcel()">导出本次测算 Excel</button>
+      <button onclick="exportProfitCsv()">导出利润测算 CSV</button>
+      <button class="secondary" onclick="exportProfitExcel()">导出利润测算 Excel</button>
     </div>
   </section>
 </main>

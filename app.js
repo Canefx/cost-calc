@@ -7,13 +7,14 @@
   var SCHEME_KEY = "cost_calc_schemes_v1";
 
   // 版本号：三个文件必须同版本，否则功能会缺失
-  var APP_VERSION = "1.5.1";
-  var CALC_VERSION = "1.5.1";
+  var APP_VERSION = "1.6.0";
+  var CALC_VERSION = "1.6.0";
 
   // 档位以「上限 + 运费」存储，起点由上一档上限推导
   var tiers = [];
   var rowsCache = [];
   var profitCache = [];
+  var selectedPacks = [];
   var profitPacksPicked = false;
   var bestPacks = null;
 
@@ -128,10 +129,10 @@
 
     if (errs.length || isNaN(unitWeight) || unitWeight <= 0 || isNaN(baseCost) || baseCost < 0) {
       rowsCache = [];
-      $("rows").innerHTML = '<tr><td colspan="10" class="hint">请先修正上方参数或运费档位</td></tr>';
+      $("rows").innerHTML = '<tr><td colspan="11" class="hint">请先修正上方参数或运费档位</td></tr>';
       $("summaryRow").innerHTML = "";
       $("chartSvg").innerHTML = "";
-      $("profitResult").innerHTML = '<div class="stat" style="grid-column:1/-1">请先修正上方参数或运费档位</div>';
+      $("profitBlocks").innerHTML = '<div class="stat">请先修正上方参数或运费档位</div>';
       $("profitNote").textContent = "";
       return;
     }
@@ -169,7 +170,7 @@
     if (!C) {
       issues.push("calc.js 未加载。");
     } else {
-      if (typeof C.computeProfitRows !== "function") {
+      if (typeof C.computeProfitRows !== "function" || typeof C.computeDiscountRows !== "function") {
         issues.push("calc.js 缺少利润测算功能（实际版本 " + calcVer + "）。");
       }
       if (calcVer !== "未知" && calcVer !== CALC_VERSION) {
@@ -220,86 +221,149 @@
     $("unitPriceField").className = unit ? "field" : "field hidden";
   }
 
-  function renderProfit(rows) {
-    var input = profitInput();
-    var isUnit = input.priceMode === "unit";
-    var price = parseFloat(isUnit ? input.unitPrice : input.salePrice);
-    var hasPrice = price > 0;
+  /** 包数多选区域 */
+  function renderPackPicker(valid) {
+    var html = valid.map(function (r) {
+      var on = selectedPacks.indexOf(r.packs) >= 0 ? " checked" : "";
+      return '<label><input type="checkbox" value="' + r.packs + '"' + on + "> " + r.packs + " 包</label>";
+    }).join("");
+    if ($("profitPacks").innerHTML !== html) $("profitPacks").innerHTML = html;
 
+    $("profitPacks").querySelectorAll('input[type="checkbox"]').forEach(function (cb) {
+      cb.addEventListener("change", function () {
+        togglePack(parseInt(cb.value, 10), !!cb.checked);
+      });
+    });
+  }
+
+  function togglePack(n, on) {
+    var i = selectedPacks.indexOf(n);
+    if (on && i < 0) selectedPacks.push(n);
+    if (!on && i >= 0) selectedPacks.splice(i, 1);
+    selectedPacks.sort(function (a, b) { return a - b; });
+    profitPacksPicked = true;
+    renderProfitBlocks(rowsCache);
+  }
+
+  function pickAllPacks() {
+    selectedPacks = (rowsCache || []).filter(function (r) { return !r.over; })
+      .map(function (r) { return r.packs; });
+    profitPacksPicked = true;
+    renderProfit(rowsCache);
+  }
+
+  function pickBestPack() {
+    selectedPacks = bestPacks != null ? [bestPacks] : [];
+    profitPacksPicked = true;
+    renderProfit(rowsCache);
+  }
+
+  function pickClearPacks() {
+    selectedPacks = [];
+    profitPacksPicked = true;
+    renderProfit(rowsCache);
+  }
+
+  function renderProfit(rows) {
     // calc.js 版本过旧时不抛异常，给出可操作的提示
-    if (typeof C.computeProfitRows !== "function") {
-      $("profitResult").innerHTML = '<div class="stat" style="grid-column:1/-1;color:#c0392b">' +
-        "calc.js 版本过旧，缺少利润测算功能。请把 calc.js、app.js、index.html 一起重新上传。</div>";
+    if (typeof C.computeDiscountRows !== "function" || typeof C.profitSummary !== "function") {
+      $("profitBlocks").innerHTML = '<div class="stat" style="color:#c0392b">' +
+        "calc.js 版本过旧，缺少折扣测算功能。请把 calc.js、app.js、index.html 一起重新上传。</div>";
       $("profitNote").textContent = "";
       profitCache = [];
       return;
     }
 
-    // 1) 同步包数下拉框
     var valid = (rows || []).filter(function (r) { return !r.over; });
     if (!valid.length) {
       $("profitPacks").innerHTML = "";
-      $("profitCost").value = "";
-      $("profitResult").innerHTML = '<div class="stat" style="grid-column:1/-1">当前参数下没有可测算的包数</div>';
+      $("profitBlocks").innerHTML = '<div class="stat">当前参数下没有可测算的包数</div>';
       $("profitNote").textContent = "";
       profitCache = [];
       return;
     }
-    var cur = $("profitPacks").value;
-    var options = valid.map(function (r) {
-      return '<option value="' + r.packs + '">' + r.packs + " 包（" + C.formatNum(r.weight, 3) + "kg）</option>";
-    }).join("");
-    if ($("profitPacks").innerHTML !== options) $("profitPacks").innerHTML = options;
-    var keep = valid.some(function (r) { return String(r.packs) === String(cur); });
-    // 用户手动选过就尊重选择；否则跟随当前最优包数
-    if (!profitPacksPicked || !keep) {
-      $("profitPacks").value = String(bestPacks != null ? bestPacks : valid[0].packs);
+
+    // 未手动选过时，默认选中成本最优的包数（用户全部取消勾选后不再自动回填）
+    var existing = selectedPacks.filter(function (n) {
+      return valid.some(function (r) { return r.packs === n; });
+    });
+    selectedPacks = existing;
+    if (!profitPacksPicked) {
+      selectedPacks = [bestPacks != null ? bestPacks : valid[0].packs];
     }
 
-    // 2) 取出所选包数的成本行
-    var packs = parseInt($("profitPacks").value, 10);
-    var row = valid.filter(function (r) { return r.packs === packs; })[0] || valid[0];
-    if (!row) return;
-    $("profitCost").value = C.money(row.costWith, 2);
+    renderPackPicker(valid);
+    renderProfitBlocks(rows);
+  }
 
-    // 3) 计算单条结果
+  /** 每个选中包数一个区块，内含原价与各折扣的利润测算 */
+  function renderProfitBlocks(rows) {
+    var input = profitInput();
+    var isUnit = input.priceMode === "unit";
+    var price = parseFloat(isUnit ? input.unitPrice : input.salePrice);
     var sum = C.profitSummary(input);
-    var r = C.computeProfitRows([row], input)[0];
-    profitCache = [r];
+    var valid = (rows || []).filter(function (r) { return !r.over; });
 
-    if (!hasPrice) {
-      $("profitResult").innerHTML = '<div class="stat" style="grid-column:1/-1">' +
-        "填写" + (isUnit ? "单包售卖价（元/包）" : "整单售卖价（元）") + "后自动测算</div>";
+    var chosen = selectedPacks.filter(function (n) {
+      return valid.some(function (r) { return r.packs === n; });
+    }).sort(function (a, b) { return a - b; });
+
+    if (!chosen.length) {
+      $("profitBlocks").innerHTML = '<div class="stat">请至少勾选一个包数</div>';
       $("profitNote").textContent = "";
+      profitCache = [];
       return;
     }
 
-    var loss = r.profitRate != null && r.profitRate < 0;
-    var unitProfit = r.settlement != null ? (r.settlement - r.cost) / r.packs : null;
-
-    $("profitResult").innerHTML =
-      stat("成本 / 含快递费", m2(r.cost) + " 元", r.packs + " 包" + (row.mode === "stack" ? "（整箱叠加）" : "")) +
-      stat("整单售价 / 单包售价", m2(r.salePrice) + " 元 / " + m2(r.unitPrice) + " 元", isUnit ? "按单包报价" : "按整单报价") +
-      stat("结算价", m2(r.settlement) + " 元", "售价 − 成本 × 合计费比 " + pct(sum.totalRate)) +
-      stat("利润率", pct(r.profitRate), loss ? "低于成本，亏损" : "毛利占比") +
-      stat("保本 ROI", r.breakEvenRoi == null ? "—" : r.breakEvenRoi.toFixed(2), "退款率 " + pct(C.num(input.refundRate) / 100)) +
-      stat("保本售价", m2(r.breakEvenPrice) + " 元", "成本 × (1 + 合计费比)") +
-      stat("单包利润", unitProfit == null ? "—" : m2(unitProfit) + " 元", "（结算价 − 成本）÷ 包数");
-
-    // 亏损时把利润率标红
-    if (loss) {
-      $("profitResult").innerHTML = $("profitResult").innerHTML.replace(
-        /<div class="v">([-\d.]+%)<\/div>/,
-        '<div class="v" style="color:#e74c3c">$1</div>'
-      );
+    if (!(price > 0)) {
+      $("profitBlocks").innerHTML = '<div class="stat">填写' +
+        (isUnit ? "单包售卖价（元/包）" : "整单售卖价（元）") + "后自动测算</div>";
+      $("profitNote").textContent = "";
+      profitCache = [];
+      return;
     }
 
-    $("profitNote").innerHTML =
-      "含百补综合扣点 " + pct(sum.combinedSubsidy) + "（平台 " + pct(r.platform) + " + 黑标 " + pct(r.black) +
-      " + 百补 " + pct(r.subsidy) + "），计提费比 " + pct(r.accrual) + "，合计费比 " + pct(sum.totalRate) +
-      "；结算价 = 售价 − 成本 × 合计费比；利润率 = (结算价 − 成本) ÷ 结算价。";
-  }
+    var blocks = [];
+    var html = chosen.map(function (n) {
+      var row = valid.filter(function (r) { return r.packs === n; })[0];
+      var list = C.computeDiscountRows(row, input);
+      if (!list.length) return "";
+      blocks.push({ packs: n, weight: row.weight, cost: row.costWith, rows: list });
 
+      var body = list.map(function (d) {
+        var profitAmount = d.settlement != null ? d.settlement - d.cost : null;
+        var cls = d.loss ? "loss" : "";
+        var roiTxt = d.breakEvenRoi == null ? "—" : d.breakEvenRoi.toFixed(2);
+        return '<tr class="' + cls + '">' +
+          "<td>" + esc(d.label) + "</td>" +
+          '<td class="num">' + m2(d.salePrice) + "</td>" +
+          '<td class="num">' + m2(d.unitPrice) + "</td>" +
+          '<td class="num">' + m2(d.settlement) + "</td>" +
+          '<td class="num">' + m2(profitAmount) + "</td>" +
+          '<td class="num">' + pct(d.profitRate) + "</td>" +
+          '<td class="num">' + roiTxt + "</td>" +
+          "</tr>";
+      }).join("");
+
+      return '<div class="profit-block">' +
+        '<div class="profit-head">' + n + " 包" +
+        '<span class="sub">' + C.formatNum(row.weight, 3) + " kg · 成本 " + m2(row.costWith) + " 元 · 原价 " +
+        m2(list[0].salePrice) + " 元（单包 " + m2(list[0].unitPrice) + " 元）</span></div>" +
+        '<div class="table-wrap"><table><thead><tr>' +
+        "<th>折扣</th><th class=\"num\">整单价/元</th><th class=\"num\">单包价/元</th>" +
+        "<th class=\"num\">结算价/元</th><th class=\"num\">利润额/元</th>" +
+        "<th class=\"num\">利润率</th><th class=\"num\">保本ROI</th>" +
+        "</tr></thead><tbody>" + body + "</tbody></table></div></div>";
+    }).join("");
+
+    profitCache = blocks;
+    $("profitBlocks").innerHTML = html || '<div class="stat">无可用数据</div>';
+
+    $("profitNote").innerHTML =
+      "含百补综合扣点 " + pct(sum.combinedSubsidy) + "，计提费比 " + pct(C.num(input.accrualRate) / 100) +
+      "，合计费比 " + pct(sum.totalRate) + "，退款率 " + pct(C.num(input.refundRate) / 100) +
+      "；结算价 = 售价 − 成本 × 合计费比；利润率 = (结算价 − 成本) ÷ 结算价；保本 ROI = 1 ÷ 利润率 ÷ (1 − 退款率)。";
+  }
   function renderSummary(s, params) {
     var best = s.best;
     var html = "";
@@ -335,6 +399,7 @@
         '<td class="num">' + (isStack ? m2(r.boxCost) : "—") + "</td>" +
         '<td class="num">' + (isStack ? (r.rest > 0 ? m2(r.restCost) : "—") : "—") + "</td>" +
         '<td class="num">' + (r.over ? "—" : m2(r.fee)) + "</td>" +
+        "<td>" + esc(r.freightText || "—") + "</td>" +
         '<td class="num">' + (r.over ? "—" : m2(r.costWith)) + "</td>" +
         '<td class="num">' + m2(r.costWithout) + "</td>" +
         '<td class="num">' + (r.over ? "—" : m2(r.perWith)) + "</td>" +
@@ -342,7 +407,7 @@
         "</tr>"
       );
     }).join("");
-    $("rows").innerHTML = html || '<tr><td colspan="10" class="hint">无数据</td></tr>';
+    $("rows").innerHTML = html || '<tr><td colspan="11" class="hint">无数据</td></tr>';
   }
 
   /* ---------------- 走势图 ---------------- */
@@ -469,7 +534,7 @@
 
   /* ---------------- 导出 ---------------- */
   function tableHeader() {
-    return ["包数", "克重/kg", "计价方式", "整箱成本/元", "散包成本/元", "运费合计/元",
+    return ["包数", "克重/kg", "计价方式", "整箱成本/元", "散包成本/元", "运费合计/元", "运费明细",
       "成本/含快递费", "成本/不含快递费", "单包成本/含快递费", "单包成本/不含快递费"];
   }
 
@@ -483,6 +548,7 @@
         isStack ? m2(r.boxCost) : "—",
         isStack ? (r.rest > 0 ? m2(r.restCost) : "—") : "—",
         r.over ? "—" : m2(r.fee),
+        r.freightText || "—",
         r.over ? "—" : m2(r.costWith),
         m2(r.costWithout),
         r.over ? "—" : m2(r.perWith),
@@ -536,24 +602,34 @@
 
   /* ---------------- 利润测算导出 ---------------- */
   function profitHeader() {
-    return ["包数", "成本/含快递费", "售卖价", "单包售价", "结算价", "利润率", "保本roi",
-      "平台扣点", "黑标扣点", "百补扣点", "含百补综合扣点", "计提费比", "合计费比"];
+    return ["包数", "克重/kg", "成本/含快递费", "折扣", "整单价/元", "单包价/元",
+      "结算价/元", "利润额/元", "利润率", "保本ROI"];
   }
 
   function profitBody() {
-    return profitCache.map(function (r) {
-      if (r.cost == null) {
-        return [r.packs, "—", m2(r.salePrice), "—", "—", "—", "—",
-          pct(r.platform), pct(r.black), pct(r.subsidy), pct(r.combinedSubsidy), pct(r.accrual), pct(r.totalRate)];
-      }
-      return [r.packs, m2(r.cost), m2(r.salePrice), m2(r.unitPrice), m2(r.settlement), pct(r.profitRate),
-        r.breakEvenRoi == null ? "—" : r.breakEvenRoi.toFixed(2),
-        pct(r.platform), pct(r.black), pct(r.subsidy), pct(r.combinedSubsidy), pct(r.accrual), pct(r.totalRate)];
+    var out = [];
+    (profitCache || []).forEach(function (block) {
+      block.rows.forEach(function (d) {
+        var profitAmount = d.settlement != null ? d.settlement - d.cost : null;
+        out.push([
+          block.packs,
+          C.formatNum(block.weight, 3),
+          m2(block.cost),
+          d.label,
+          m2(d.salePrice),
+          m2(d.unitPrice),
+          m2(d.settlement),
+          m2(profitAmount),
+          pct(d.profitRate),
+          d.breakEvenRoi == null ? "—" : d.breakEvenRoi.toFixed(2)
+        ]);
+      });
     });
+    return out;
   }
 
   function exportProfitCsv() {
-    if (!profitCache.length) return alert("请先选择包数并填写售卖价");
+    if (!profitCache.length) return alert("请先勾选包数并填写售卖价");
     var lines = [profitHeader().join(",")];
     profitBody().forEach(function (row) {
       lines.push(row.map(function (v) {
@@ -565,7 +641,7 @@
   }
 
   function exportProfitExcel() {
-    if (!profitCache.length) return alert("请先选择包数并填写售卖价");
+    if (!profitCache.length) return alert("请先勾选包数并填写售卖价");
     var head = "<tr>" + profitHeader().map(function (h) { return '<th style="background:#f0f3f7">' + esc(h) + "</th>"; }).join("") + "</tr>";
     var body = profitBody().map(function (row) {
       return "<tr>" + row.map(function (v) { return "<td>" + esc(v) + "</td>"; }).join("") + "</tr>";
@@ -738,8 +814,7 @@
       "unitWeight", "baseCost", "count",
       "casePacks", "caseWeight", "caseCost",
       "salePrice", "unitPrice",
-      "ratePlatform", "rateBlack", "rateSubsidy", "rateAccrual", "rateRefund",
-      "profitCost"
+      "ratePlatform", "rateBlack", "rateSubsidy", "rateAccrual", "rateRefund"
     ].forEach(function (id) { stopWheel($(id)); });
 
     restoreLast();
@@ -762,16 +837,15 @@
       applyPriceMode();
       renderProfit(rowsCache);
     });
-    $("profitPacks").addEventListener("change", function () {
-      profitPacksPicked = true;
-      renderProfit(rowsCache);
-    });
 
     // 暴露给内联 onclick
     window.addTier = addTier;
     window.removeTier = removeTier;
     window.resetTiers = resetTiers;
     window.applyCase = applyCase;
+    window.pickAllPacks = pickAllPacks;
+    window.pickBestPack = pickBestPack;
+    window.pickClearPacks = pickClearPacks;
     window.saveScheme = saveScheme;
     window.loadScheme = loadScheme;
     window.deleteScheme = deleteScheme;
