@@ -180,6 +180,71 @@
     };
   }
 
+  /** 利润测算：逐行套用参考表公式
+   *  单包售价 = 售卖价 ÷ 包数
+   *  含百补综合扣点 = 平台扣点 + 黑标扣点 + 百补扣点
+   *  合计费比 = 含百补综合扣点 + 计提费比
+   *  结算价 = 售卖价 − 成本 × 合计费比
+   *  利润率 = (结算价 − 成本) ÷ 结算价
+   *  保本 ROI = 1 ÷ 利润率 ÷ (1 − 退款率)
+   *  保本售价 = 成本 × (1 + 合计费比)
+   */
+  function computeProfitRows(costRows, input) {
+    var salePrice = num(input.salePrice);
+    var platform = num(input.platformRate) / 100;
+    var black = num(input.blackRate) / 100;
+    var subsidy = num(input.subsidyRate) / 100;
+    var accrual = num(input.accrualRate) / 100;
+    var refund = num(input.refundRate) / 100;
+    var combinedSubsidy = platform + black + subsidy;
+    var totalRate = combinedSubsidy + accrual;
+    var keep = 1 - refund;
+
+    return (costRows || []).map(function (r) {
+      var cost = r.costWith;
+      var out = {
+        packs: r.packs,
+        over: !!r.over,
+        cost: cost,
+        salePrice: salePrice,
+        platform: platform,
+        black: black,
+        subsidy: subsidy,
+        accrual: accrual,
+        combinedSubsidy: combinedSubsidy,
+        totalRate: totalRate,
+        unitPrice: salePrice > 0 ? salePrice / r.packs : null,
+        settlement: null,
+        profitRate: null,
+        breakEvenRoi: null,
+        breakEvenPrice: null
+      };
+      if (cost == null || salePrice <= 0) return out;
+
+      var settlement = salePrice - cost * totalRate;
+      out.settlement = settlement;
+      out.breakEvenPrice = cost * (1 + totalRate);
+      if (settlement > 0) {
+        var pr = (settlement - cost) / settlement;
+        out.profitRate = pr;
+        if (pr > 0 && keep > 0) out.breakEvenRoi = 1 / pr / keep;
+      }
+      return out;
+    });
+  }
+
+  /** 利润测算的费率汇总 */
+  function profitSummary(input) {
+    var platform = num(input.platformRate) / 100;
+    var black = num(input.blackRate) / 100;
+    var subsidy = num(input.subsidyRate) / 100;
+    var accrual = num(input.accrualRate) / 100;
+    return {
+      combinedSubsidy: platform + black + subsidy,
+      totalRate: platform + black + subsidy + accrual
+    };
+  }
+
   function num(v) {
     var n = typeof v === "number" ? v : parseFloat(String(v == null ? "" : v).replace(/[^0-9.\-]/g, ""));
     return isNaN(n) ? 0 : n;
@@ -225,6 +290,8 @@
     bestRow: bestRow,
     reverseCase: reverseCase,
     summarize: summarize,
+    computeProfitRows: computeProfitRows,
+    profitSummary: profitSummary,
     validateTiers: validateTiers,
     formatNum: formatNum,
     money: money,

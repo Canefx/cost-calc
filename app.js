@@ -9,6 +9,7 @@
   // 档位以「上限 + 运费」存储，起点由上一档上限推导
   var tiers = [];
   var rowsCache = [];
+  var profitCache = [];
   var bestPacks = null;
 
   var $ = function (id) { return document.getElementById(id); };
@@ -114,6 +115,8 @@
       $("rows").innerHTML = '<tr><td colspan="10" class="hint">请先修正上方参数或运费档位</td></tr>';
       $("summaryRow").innerHTML = "";
       $("chartSvg").innerHTML = "";
+      $("profitRows").innerHTML = '<tr><td colspan="13" class="hint">请先修正上方参数或运费档位</td></tr>';
+      $("profitSummary").innerHTML = "";
       return;
     }
 
@@ -136,7 +139,68 @@
     renderSummary(s, params);
     renderChart(rows, s.best);
     renderTable(rows, s);
+    renderProfit(rows);
     persistLast(params);
+  }
+
+  /* ---------------- 利润测算 ---------------- */
+  var pct = function (v) { return v == null || isNaN(v) ? "—" : (Number(v) * 100).toFixed(2) + "%"; };
+
+  function profitInput() {
+    return {
+      salePrice: $("salePrice").value,
+      platformRate: $("ratePlatform").value,
+      blackRate: $("rateBlack").value,
+      subsidyRate: $("rateSubsidy").value,
+      accrualRate: $("rateAccrual").value,
+      refundRate: $("rateRefund").value
+    };
+  }
+
+  function renderProfit(rows) {
+    var input = profitInput();
+    var salePrice = parseFloat(input.salePrice);
+    var sum = C.profitSummary(input);
+
+    $("profitSummary").innerHTML =
+      stat("含百补综合扣点", pct(sum.combinedSubsidy), "平台 + 黑标 + 百补") +
+      stat("合计费比", pct(sum.totalRate), "综合扣点 + 计提费比") +
+      stat("售卖价", salePrice > 0 ? m2(salePrice) + " 元" : "未填写", salePrice > 0 ? "整单售价" : "填写售卖价后自动计算");
+
+    if (!(salePrice > 0)) {
+      $("profitRows").innerHTML = '<tr><td colspan="13" class="hint">请在上方填写售卖价（整单，元）</td></tr>';
+      profitCache = [];
+      return;
+    }
+
+    profitCache = C.computeProfitRows(rows, input);
+    var html = profitCache.map(function (r) {
+      if (r.cost == null) {
+        return '<tr class="over"><td class="num">' + r.packs + '</td><td class="num">—</td>' +
+          '<td class="num">' + m2(r.salePrice) + "</td>" +
+          '<td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td>' +
+          '<td class="num">' + pct(r.platform) + '</td><td class="num">' + pct(r.black) + '</td>' +
+          '<td class="num">' + pct(r.subsidy) + '</td><td class="num">' + pct(r.combinedSubsidy) + '</td>' +
+          '<td class="num">' + pct(r.accrual) + '</td><td class="num">' + pct(r.totalRate) + "</td></tr>";
+      }
+      var lossCls = r.profitRate != null && r.profitRate < 0 ? ' style="color:#e74c3c"' : "";
+      return "<tr>" +
+        '<td class="num">' + r.packs + "</td>" +
+        '<td class="num">' + m2(r.cost) + "</td>" +
+        '<td class="num">' + m2(r.salePrice) + "</td>" +
+        '<td class="num">' + m2(r.unitPrice) + "</td>" +
+        '<td class="num">' + m2(r.settlement) + "</td>" +
+        "<td class=\"num\"" + lossCls + ">" + pct(r.profitRate) + "</td>" +
+        '<td class="num">' + (r.breakEvenRoi == null ? "—" : r.breakEvenRoi.toFixed(2)) + "</td>" +
+        '<td class="num">' + pct(r.platform) + "</td>" +
+        '<td class="num">' + pct(r.black) + "</td>" +
+        '<td class="num">' + pct(r.subsidy) + "</td>" +
+        '<td class="num">' + pct(r.combinedSubsidy) + "</td>" +
+        '<td class="num">' + pct(r.accrual) + "</td>" +
+        '<td class="num">' + pct(r.totalRate) + "</td>" +
+        "</tr>";
+    }).join("");
+    $("profitRows").innerHTML = html || '<tr><td colspan="13" class="hint">无数据</td></tr>';
   }
 
   function renderSummary(s, params) {
@@ -373,6 +437,49 @@
     download("成本测算-" + stamp() + ".xls", "\uFEFF" + html, "application/vnd.ms-excel;charset=utf-8");
   }
 
+  /* ---------------- 利润测算导出 ---------------- */
+  function profitHeader() {
+    return ["包数", "成本/含快递费", "售卖价", "单包售价", "结算价", "利润率", "保本roi",
+      "平台扣点", "黑标扣点", "百补扣点", "含百补综合扣点", "计提费比", "合计费比"];
+  }
+
+  function profitBody() {
+    return profitCache.map(function (r) {
+      if (r.cost == null) {
+        return [r.packs, "—", m2(r.salePrice), "—", "—", "—", "—",
+          pct(r.platform), pct(r.black), pct(r.subsidy), pct(r.combinedSubsidy), pct(r.accrual), pct(r.totalRate)];
+      }
+      return [r.packs, m2(r.cost), m2(r.salePrice), m2(r.unitPrice), m2(r.settlement), pct(r.profitRate),
+        r.breakEvenRoi == null ? "—" : r.breakEvenRoi.toFixed(2),
+        pct(r.platform), pct(r.black), pct(r.subsidy), pct(r.combinedSubsidy), pct(r.accrual), pct(r.totalRate)];
+    });
+  }
+
+  function exportProfitCsv() {
+    if (!profitCache.length) return alert("请先在利润测算里填写售卖价");
+    var lines = [profitHeader().join(",")];
+    profitBody().forEach(function (row) {
+      lines.push(row.map(function (v) {
+        var t = String(v);
+        return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+      }).join(","));
+    });
+    download("利润测算-" + stamp() + ".csv", "\uFEFF" + lines.join("\r\n"), "text/csv;charset=utf-8");
+  }
+
+  function exportProfitExcel() {
+    if (!profitCache.length) return alert("请先在利润测算里填写售卖价");
+    var head = "<tr>" + profitHeader().map(function (h) { return '<th style="background:#f0f3f7">' + esc(h) + "</th>"; }).join("") + "</tr>";
+    var body = profitBody().map(function (row) {
+      return "<tr>" + row.map(function (v) { return "<td>" + esc(v) + "</td>"; }).join("") + "</tr>";
+    }).join("");
+    var html =
+      '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">' +
+      '<head><meta charset="utf-8"><style>td,th{border:1px solid #ccc;padding:4px 8px;font-family:"Microsoft YaHei";font-size:12px}</style></head>' +
+      "<body><table><thead>" + head + "</thead><tbody>" + body + "</tbody></table></body></html>";
+    download("利润测算-" + stamp() + ".xls", "\uFEFF" + html, "application/vnd.ms-excel;charset=utf-8");
+  }
+
   /* ---------------- 方案存取 ---------------- */
   function readSchemes() {
     try {
@@ -395,7 +502,13 @@
       tiers: tiers.map(function (t) { return { max: t.max, fee: t.fee }; }),
       casePacks: $("casePacks").value,
       caseWeight: $("caseWeight").value,
-      caseCost: $("caseCost").value
+      caseCost: $("caseCost").value,
+      salePrice: $("salePrice").value,
+      ratePlatform: $("ratePlatform").value,
+      rateBlack: $("rateBlack").value,
+      rateSubsidy: $("rateSubsidy").value,
+      rateAccrual: $("rateAccrual").value,
+      rateRefund: $("rateRefund").value
     };
   }
 
@@ -428,6 +541,12 @@
     if (c.casePacks != null) $("casePacks").value = c.casePacks;
     if (c.caseWeight != null) $("caseWeight").value = c.caseWeight;
     if (c.caseCost != null) $("caseCost").value = c.caseCost;
+    if (c.salePrice != null) $("salePrice").value = c.salePrice;
+    if (c.ratePlatform != null) $("ratePlatform").value = c.ratePlatform;
+    if (c.rateBlack != null) $("rateBlack").value = c.rateBlack;
+    if (c.rateSubsidy != null) $("rateSubsidy").value = c.rateSubsidy;
+    if (c.rateAccrual != null) $("rateAccrual").value = c.rateAccrual;
+    if (c.rateRefund != null) $("rateRefund").value = c.rateRefund;
     if (Array.isArray(c.tiers) && c.tiers.length) {
       tiers = c.tiers.map(function (t) { return { max: t.max, fee: t.fee }; });
     }
@@ -468,7 +587,13 @@
         tiers: tiers.map(function (t) { return { max: t.max, fee: t.fee }; }),
         casePacks: $("casePacks").value,
         caseWeight: $("caseWeight").value,
-        caseCost: $("caseCost").value
+        caseCost: $("caseCost").value,
+        salePrice: $("salePrice").value,
+        ratePlatform: $("ratePlatform").value,
+        rateBlack: $("rateBlack").value,
+        rateSubsidy: $("rateSubsidy").value,
+        rateAccrual: $("rateAccrual").value,
+        rateRefund: $("rateRefund").value
       }));
     } catch (e) { /* 隐私模式忽略 */ }
   }
@@ -487,6 +612,12 @@
     if (raw.casePacks != null) $("casePacks").value = raw.casePacks;
     if (raw.caseWeight != null) $("caseWeight").value = raw.caseWeight;
     if (raw.caseCost != null) $("caseCost").value = raw.caseCost;
+    if (raw.salePrice != null) $("salePrice").value = raw.salePrice;
+    if (raw.ratePlatform != null) $("ratePlatform").value = raw.ratePlatform;
+    if (raw.rateBlack != null) $("rateBlack").value = raw.rateBlack;
+    if (raw.rateSubsidy != null) $("rateSubsidy").value = raw.rateSubsidy;
+    if (raw.rateAccrual != null) $("rateAccrual").value = raw.rateAccrual;
+    if (raw.rateRefund != null) $("rateRefund").value = raw.rateRefund;
     tiers = Array.isArray(raw.tiers) && raw.tiers.length
       ? raw.tiers.map(function (t) { return { max: t.max, fee: t.fee }; })
       : C.DEFAULT_TIERS.map(function (t) { return { max: t.max, fee: t.fee }; });
@@ -506,6 +637,10 @@
       $(id).addEventListener("input", function () { renderCase(); render(); });
     });
     $("stackEnabled").addEventListener("change", render);
+    // 利润测算参数变化只需重算利润部分
+    ["salePrice", "ratePlatform", "rateBlack", "rateSubsidy", "rateAccrual", "rateRefund"].forEach(function (id) {
+      $(id).addEventListener("input", function () { renderProfit(rowsCache); });
+    });
 
     // 暴露给内联 onclick
     window.addTier = addTier;
@@ -517,6 +652,8 @@
     window.deleteScheme = deleteScheme;
     window.exportCsv = exportCsv;
     window.exportExcel = exportExcel;
+    window.exportProfitCsv = exportProfitCsv;
+    window.exportProfitExcel = exportProfitExcel;
 
     renderCase();
     render();
