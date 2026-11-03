@@ -10,6 +10,7 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
+  var VERSION = "1.3.0";
   var EPS = 1e-9;
 
   var DEFAULT_TIERS = [
@@ -282,6 +283,7 @@
   }
 
   return {
+    VERSION: VERSION,
     DEFAULT_TIERS: DEFAULT_TIERS,
     OVER_LIMIT_TEXT: OVER_LIMIT_TEXT,
     freightFor: freightFor,

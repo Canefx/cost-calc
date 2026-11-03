@@ -6,6 +6,10 @@
   var LAST_KEY = "cost_calc_last_v1";
   var SCHEME_KEY = "cost_calc_schemes_v1";
 
+  // 版本号：三个文件必须同版本，否则功能会缺失
+  var APP_VERSION = "1.3.0";
+  var CALC_VERSION = "1.3.0";
+
   // 档位以「上限 + 运费」存储，起点由上一档上限推导
   var tiers = [];
   var rowsCache = [];
@@ -146,6 +150,35 @@
   /* ---------------- 利润测算 ---------------- */
   var pct = function (v) { return v == null || isNaN(v) ? "—" : (Number(v) * 100).toFixed(2) + "%"; };
 
+  /** 版本/依赖自检：文件没一起更新时给出明确提示，而不是静默失效 */
+  function checkVersion() {
+    var issues = [];
+    var calcVer = C && C.VERSION ? C.VERSION : "未知";
+    if (!C) {
+      issues.push("calc.js 未加载。");
+    } else {
+      if (typeof C.computeProfitRows !== "function") {
+        issues.push("calc.js 缺少利润测算功能（实际版本 " + calcVer + "）。");
+      }
+      if (calcVer !== "未知" && calcVer !== CALC_VERSION) {
+        issues.push("页面需要 calc.js " + CALC_VERSION + "，实际加载 " + calcVer + "。");
+      }
+    }
+    var warn = $("versionWarn");
+    if (warn) {
+      if (issues.length) {
+        warn.className = "version-warn";
+        warn.innerHTML = "<b>文件版本不一致：</b>" + issues.join(" ") +
+          " 请把 index.html、calc.js、app.js 三个文件一起重新上传到 GitHub（或直接上传单文件版的 index.html）。";
+      } else {
+        warn.className = "hidden";
+        warn.innerHTML = "";
+      }
+    }
+    var ver = $("appVersion");
+    if (ver) ver.textContent = "v" + APP_VERSION;
+  }
+
   function profitInput() {
     return {
       salePrice: $("salePrice").value,
@@ -160,6 +193,17 @@
   function renderProfit(rows) {
     var input = profitInput();
     var salePrice = parseFloat(input.salePrice);
+
+    // calc.js 版本过旧时不抛异常，给出可操作的提示
+    if (typeof C.computeProfitRows !== "function") {
+      $("profitRows").innerHTML = '<tr><td colspan="13" class="hint" style="color:#c0392b">' +
+        "calc.js 版本过旧，缺少利润测算功能。请把 calc.js、app.js、index.html 一起重新上传。" +
+        "</td></tr>";
+      $("profitSummary").innerHTML = "";
+      profitCache = [];
+      return;
+    }
+
     var sum = C.profitSummary(input);
 
     $("profitSummary").innerHTML =
@@ -625,6 +669,7 @@
 
   /* ---------------- 初始化 ---------------- */
   function init() {
+    checkVersion();
     restoreLast();
     renderTiers();
     renderSchemeOptions();

@@ -84,6 +84,10 @@
   .tier-row input { width: 92px; }
   #chartSvg { width: 100%; height: auto; display: block; }
   .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .version-warn {
+    background: #fdecea; color: #c0392b; border-bottom: 1px solid #f5c2c0;
+    padding: 10px 20px; font-size: 13px; line-height: 1.6;
+  }
   footer { text-align: center; color: var(--muted); font-size: 12px; padding: 10px 0 30px; }
   @media print {
     header, .no-print { display: none !important; }
@@ -105,6 +109,8 @@
     <button class="ghost" onclick="deleteScheme()">删除</button>
   </div>
 </header>
+
+<div id="versionWarn" class="hidden"></div>
 
 <main>
   <div class="grid2">
@@ -270,7 +276,7 @@
   </section>
 </main>
 
-<footer>数据保存在本机浏览器，不上传服务器 · 逻辑依据「成本测算.xlsx」「利润测算表」</footer>
+<footer>数据保存在本机浏览器，不上传服务器 · 逻辑依据「成本测算.xlsx」「利润测算表」 · <span id="appVersion"></span></footer>
 
 <script src="calc.js"></script>
 <script src="app.js"></script>
