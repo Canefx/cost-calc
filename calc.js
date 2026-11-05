@@ -10,7 +10,7 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  var VERSION = "1.9.0";
+  var VERSION = "1.10.0";
   var EPS = 1e-9;
 
   var DEFAULT_TIERS = [
@@ -350,7 +350,9 @@
     return s + "折";
   }
 
-  /** 按折扣逐档测算：售卖价 × 各折扣后的售价与利润 */
+  /** 按折扣逐档测算：售卖价 × 各折扣后的售价与利润
+   *  input.discounts 可传入自定义折扣数组（0~1 的小数），缺省用默认档位
+   */
   function computeDiscountRows(costRow, input) {
     var base = computeProfitRows([costRow], input)[0];
     if (!base || base.cost == null || base.salePrice == null) return [];
@@ -358,15 +360,19 @@
     var cost = base.cost;
     var rate = base.totalRate;
     var packs = base.packs;
+    var discounts = (input && Array.isArray(input.discounts) && input.discounts.length)
+      ? input.discounts
+      : DISCOUNTS;
 
-    return DISCOUNTS.map(function (d) {
-      var sale = base.salePrice * d;
+    return discounts.map(function (d) {
+      var dv = num(d);
+      var sale = base.salePrice * dv;
       var settlement = sale - cost * rate;
       var profitRate = settlement > 0 ? (settlement - cost) / settlement : null;
       var roi = (profitRate != null && profitRate > 0 && keep > 0) ? 1 / profitRate / keep : null;
       return {
-        rate: d,
-        label: discountLabel(d),
+        rate: dv,
+        label: discountLabel(dv),
         packs: packs,
         cost: cost,
         salePrice: sale,

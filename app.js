@@ -7,8 +7,8 @@
   var SCHEME_KEY = "cost_calc_schemes_v1";
 
   // 版本号：三个文件必须同版本，否则功能会缺失
-  var APP_VERSION = "1.9.0";
-  var CALC_VERSION = "1.9.0";
+  var APP_VERSION = "1.10.0";
+  var CALC_VERSION = "1.10.0";
 
   // 档位以「上限 + 运费」存储，起点由上一档上限推导
   var tiers = [];
@@ -222,6 +222,7 @@
       accrualRate: "0",
       refundRate: "10",
       linkedPacks: null,
+      discounts: null,   // 自定义折扣数组（0~1 小数）；null 用默认档位
       result: null,   // { rows:[...], weight, cost, packs, sum } 或 null
       collapsed: false
     };
@@ -234,7 +235,7 @@
           id: p.id, name: p.name, packs: p.packs, cost: p.cost, salePrice: p.salePrice,
           targetRate: p.targetRate, platformRate: p.platformRate, blackRate: p.blackRate,
           subsidyRate: p.subsidyRate, accrualRate: p.accrualRate, refundRate: p.refundRate,
-          linkedPacks: p.linkedPacks, collapsed: p.collapsed
+          linkedPacks: p.linkedPacks, collapsed: p.collapsed, discounts: p.discounts
         };
       })));
     } catch (e) { /* 隐私模式忽略 */ }
@@ -301,22 +302,34 @@
     renderProfitList();
   }
 
-  /** 输入框改动时把值写回当前激活实例，只标记不重算 */
+  /** 输入框改动时把值写回实例，只更新数据不重建 DOM（避免输入框失焦断输） */
   function onProfitFieldInput(id, field) {
     var p = getProfitInstance(id);
     if (!p) return;
     var el = $("pi-" + id + "-" + field);
     if (!el) return;
     p[field] = el.value;
-    // 手动改包数或成本 → 解除联动
+    // 手动改包数或成本 → 解除联动（只更新明细表格高亮）
     if (field === "packs" || field === "cost") {
       if (p.linkedPacks != null) {
         p.linkedPacks = null;
         renderTable(rowsCache, null);
+        // 局部刷新该实例头部联动提示
+        updateInstanceHead(p);
       }
     }
     persistProfitInstances();
-    renderProfitList();
+  }
+
+  /** 局部更新某实例头部的联动/结果摘要文字（不重建输入框） */
+  function updateInstanceHead(p) {
+    var head = document.querySelector ? document.querySelector(".profit-instance#pi-" + p.id + " .pi-summary") : null;
+    if (!head) return;
+    var linkedTxt = p.linkedPacks != null ? "已联动明细 " + p.linkedPacks + " 包行" : "独立填写";
+    var summary = p.result
+      ? "原价 " + m2(p.result.rows[0].salePrice) + " 元 · 利润率 " + pct(p.result.rows[0].profitRate)
+      : "未测算";
+    head.textContent = linkedTxt + " · " + summary;
   }
 
   /** 点击测算明细某一行：带入到当前激活的测算实例 */
@@ -386,7 +399,71 @@
           persistProfitInstances();
         });
       }
+      // 折扣数值修改：写回 discounts，不重建 DOM（避免断输）
+      bindDiscountInputs(p);
     });
+  }
+
+  /** 绑定折扣数值输入框：改动只写回数据 + 更新标签文字，不重建 DOM */
+  function bindDiscountInputs(p) {
+    var container = $("pi-" + p.id);
+    if (!container || typeof container.querySelectorAll !== "function") return;
+    var inputs = container.querySelectorAll(".discount-val");
+    inputs.forEach(function (el) {
+      var idx = parseInt(el.getAttribute("data-idx"), 10);
+      var rates = (p.discounts && p.discounts.length) ? p.discounts : C.DISCOUNTS.slice();
+      if (!el._bound) {
+        el._bound = true;
+        el.addEventListener("input", function () {
+          var v = parseFloat(el.value);
+          if (isNaN(v) || v <= 0 || v > 1) return;
+          // 确保 discounts 独立数组
+          if (!p.discounts || !p.discounts.length) p.discounts = C.DISCOUNTS.slice();
+          p.discounts[idx] = v;
+          persistProfitInstances();
+          // 更新旁边标签
+          var label = el.parentNode;
+          if (label) {
+            var span = label.querySelector(".discount-label");
+            if (span) span.textContent = C.discountLabel(v);
+          }
+        });
+      }
+    });
+  }
+
+  /** 新增一个折扣到实例 */
+  function addDiscount(id) {
+    var p = getProfitInstance(id);
+    if (!p) return;
+    var input = $("pi-" + id + "-newDiscount");
+    var v = input ? parseFloat(input.value) : NaN;
+    if (isNaN(v) || v <= 0 || v > 1) { alert("请输入 0~1 之间的折扣值（如 0.66 表示 6.6 折）"); return; }
+    if (!p.discounts || !p.discounts.length) p.discounts = C.DISCOUNTS.slice();
+    p.discounts.push(v);
+    p.discounts.sort(function (a, b) { return b - a; });
+    persistProfitInstances();
+    renderProfitList();
+  }
+
+  /** 删除实例某位置的折扣 */
+  function removeDiscount(id, idx) {
+    var p = getProfitInstance(id);
+    if (!p) return;
+    if (!p.discounts || !p.discounts.length) p.discounts = C.DISCOUNTS.slice();
+    if (p.discounts.length <= 1) { alert("至少保留一个折扣档位"); return; }
+    p.discounts.splice(idx, 1);
+    persistProfitInstances();
+    renderProfitList();
+  }
+
+  /** 恢复默认折扣档位 */
+  function resetDiscounts(id) {
+    var p = getProfitInstance(id);
+    if (!p) return;
+    p.discounts = null;
+    persistProfitInstances();
+    renderProfitList();
   }
 
   /** 渲染单个实例外壳（含输入区 + 结果区） */
@@ -421,7 +498,29 @@
       '<button class="small" onclick="runProfitInstance(\'' + p.id + '\')">确定测算</button>' +
       '<span class="hint">' + esc(linkedTxt) + "</span>" +
       "</div>" +
+      renderDiscountManager(p) +
       '<div id="pi-result-' + p.id + '" class="profit-result">' + renderProfitInstanceResultHtml(p) + "</div>" +
+      "</div></div>";
+  }
+
+  /** 折扣增删改管理区：列出当前折扣，可改数值、删除、新增 */
+  function renderDiscountManager(p) {
+    var rates = (p.discounts && p.discounts.length) ? p.discounts : C.DISCOUNTS.slice();
+    var chips = rates.map(function (r, i) {
+      return '<div class="discount-chip">' +
+        '<input class="discount-val" type="number" step="0.01" min="0.01" max="1" value="' + r + '"' +
+        ' data-pi="' + p.id + '" data-idx="' + i + '">' +
+        '<span class="discount-label">' + esc(C.discountLabel(C.num(r))) + "</span>" +
+        '<button class="ghost small" onclick="removeDiscount(\'' + p.id + '\',' + i + ')">×</button>' +
+        "</div>";
+    }).join("");
+    return '<div class="discount-manager">' +
+      '<div class="dm-head">折扣明细（增删改，改后点「确定测算」生效）</div>' +
+      '<div class="discount-chips">' + chips + "</div>" +
+      '<div class="dm-toolbar">' +
+      '<input id="pi-' + p.id + '-newDiscount" type="number" step="0.01" min="0.01" max="1" placeholder="如 0.66 或 0.9">' +
+      '<button class="small" onclick="addDiscount(\'' + p.id + '\')">+ 添加折扣</button>' +
+      '<button class="ghost small" onclick="resetDiscounts(\'' + p.id + '\')">恢复默认</button>' +
       "</div></div>";
   }
 
@@ -444,7 +543,8 @@
       subsidyRate: p.subsidyRate,
       accrualRate: p.accrualRate,
       refundRate: p.refundRate,
-      profitCost: p.cost
+      profitCost: p.cost,
+      discounts: (p.discounts && p.discounts.length) ? p.discounts : null
     };
     var packs = parseInt(p.packs, 10);
     var cost = parseFloat(p.cost);
@@ -1055,6 +1155,9 @@
     window.setActiveProfit = setActiveProfit;
     window.toggleProfitCollapse = toggleProfitCollapse;
     window.runProfitInstance = runProfitInstance;
+    window.addDiscount = addDiscount;
+    window.removeDiscount = removeDiscount;
+    window.resetDiscounts = resetDiscounts;
     window.toggleSection = toggleSection;
     window.toggleAllSections = toggleAllSections;
     window.saveScheme = saveScheme;
@@ -1069,7 +1172,7 @@
     window.__profitState = function () {
       return {
         instances: profitInstances.map(function (p) {
-          return { id: p.id, name: p.name, packs: p.packs, cost: p.cost, linkedPacks: p.linkedPacks, hasResult: !!p.result };
+          return { id: p.id, name: p.name, packs: p.packs, cost: p.cost, linkedPacks: p.linkedPacks, discounts: p.discounts, hasResult: !!p.result };
         }),
         activeId: activeProfitId
       };
