@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="app-version" content="1.8.0">
+<meta name="app-version" content="1.9.0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>包装成本测算系统</title>
 <style>
@@ -117,6 +117,21 @@
   .profit-block table { font-size: 13px; }
   .profit-block th, .profit-block td { padding: 6px 9px; }
   tr.loss td { color: var(--danger); }
+  /* 多实例利润测算 */
+  .profit-instance { border: 1px solid var(--line); border-radius: 8px; margin-bottom: 14px; overflow: hidden; }
+  .profit-instance.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(45,127,249,.12); }
+  .profit-instance .pi-head {
+    background: #eef2f7; padding: 8px 12px; display: flex; align-items: center; gap: 10px;
+    cursor: pointer; user-select: none; flex-wrap: wrap;
+  }
+  .profit-instance .pi-head .pi-title { font-weight: 600; font-size: 13px; color: #33475b; }
+  .profit-instance .pi-head .pi-badge {
+    font-size: 11px; padding: 1px 8px; border-radius: 9px; background: var(--accent); color: #fff;
+  }
+  .profit-instance .pi-head .pi-summary { font-size: 12px; color: var(--muted); }
+  .profit-instance .pi-body { padding: 12px 14px; }
+  .profit-instance.collapsed .pi-body { display: none; }
+  .profit-instance .pi-toolbar { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
   footer { text-align: center; color: var(--muted); font-size: 12px; padding: 10px 0 30px; }
   @media print {
     header, .no-print { display: none !important; }
@@ -287,41 +302,11 @@
       <span class="fold-arrow">&#9662;</span>
     </div>
     <div class="card-body">
-    <div class="fields">
-      <label class="field">测算包数（包）
-        <input id="profitPacks" type="number" step="1" min="1" placeholder="如 20">
-      </label>
-      <label class="field">成本/含快递费（元）
-        <input id="profitCost" type="number" step="0.01" min="0" placeholder="自填或点击明细行带入">
-      </label>
-      <label class="field">售卖价（整单，元）
-        <input id="salePrice" type="number" step="0.01" min="0" placeholder="如 39.90">
-      </label>
-      <label class="field">目标利润率（%）
-        <input id="targetRate" type="number" step="0.01" min="0" max="99" placeholder="如 30，反推售价">
-      </label>
-      <label class="field">平台扣点（%）
-        <input id="ratePlatform" type="number" step="0.01" min="0" value="5">
-      </label>
-      <label class="field">黑标扣点（%）
-        <input id="rateBlack" type="number" step="0.01" min="0" value="0">
-      </label>
-      <label class="field">百补扣点（%）
-        <input id="rateSubsidy" type="number" step="0.01" min="0" value="0">
-      </label>
-      <label class="field">计提费比（%）
-        <input id="rateAccrual" type="number" step="0.01" min="0" value="0">
-      </label>
-      <label class="field">退款率（%）
-        <input id="rateRefund" type="number" step="0.01" min="0" max="99" value="10">
-      </label>
+    <div class="toolbar no-print" style="margin-bottom:12px">
+      <button onclick="addProfitInstance()">+ 新增利润测算</button>
+      <span class="hint" style="align-self:center">每个测算区独立填写；点击上方「测算明细」的某一行，会带入到「当前激活」的测算区</span>
     </div>
-    <div class="toolbar no-print" style="margin-top:12px">
-      <button id="profitRun" onclick="runProfit()">确定测算</button>
-      <span id="profitLink" class="hint" style="align-self:center">独立测算：包数与成本手动填写</span>
-    </div>
-    <div id="profitBlocks" style="margin-top:14px"></div>
-    <div id="profitNote" class="hint" style="margin-top:10px"></div>
+    <div id="profitList"></div>
     <div class="toolbar no-print" style="margin-top:14px">
       <button onclick="exportProfitCsv()">导出利润测算 CSV</button>
       <button class="secondary" onclick="exportProfitExcel()">导出利润测算 Excel</button>

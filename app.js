@@ -7,16 +7,15 @@
   var SCHEME_KEY = "cost_calc_schemes_v1";
 
   // 版本号：三个文件必须同版本，否则功能会缺失
-  var APP_VERSION = "1.8.0";
-  var CALC_VERSION = "1.8.0";
+  var APP_VERSION = "1.9.0";
+  var CALC_VERSION = "1.9.0";
 
   // 档位以「上限 + 运费」存储，起点由上一档上限推导
   var tiers = [];
   var rowsCache = [];
-  var profitCache = [];
-  // linkedPacks：点击测算明细行后联动的包数；null 表示独立测算（手动填包数与成本）
-  var linkedPacks = null;
-  var lastProfitInput = "";
+  // 多个利润测算实例：每个实例独立保存输入、结果、联动状态
+  var profitInstances = [];
+  var activeProfitId = null;
   var bestPacks = null;
 
   var $ = function (id) { return document.getElementById(id); };
@@ -157,7 +156,7 @@
     renderSummary(s, params);
     renderChart(rows, s.best);
     renderTable(rows, s);
-    renderProfit(rows);
+    renderProfitList();
     persistLast(params);
   }
 
@@ -202,133 +201,291 @@
     if (ver) ver.textContent = "v" + APP_VERSION;
   }
 
-  function profitInput() {
+/* 多实例利润测算逻辑（替换 app.js 中旧的 profitInput..renderProfitBlocks 段） */
+  var PROFIT_KEY = "cost_calc_profit_instances_v1";
+
+  function uid() {
+    return "pi-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  }
+
+  function defaultProfitInstance(id) {
     return {
-      salePrice: $("salePrice").value,
-      targetRate: $("targetRate") ? $("targetRate").value : "",
-      platformRate: $("ratePlatform").value,
-      blackRate: $("rateBlack").value,
-      subsidyRate: $("rateSubsidy").value,
-      accrualRate: $("rateAccrual").value,
-      refundRate: $("rateRefund").value,
-      profitCost: $("profitCost") ? $("profitCost").value : ""
+      id: id || uid(),
+      name: "",
+      packs: "",
+      cost: "",
+      salePrice: "",
+      targetRate: "",
+      platformRate: "5",
+      blackRate: "0",
+      subsidyRate: "0",
+      accrualRate: "0",
+      refundRate: "10",
+      linkedPacks: null,
+      result: null,   // { rows:[...], weight, cost, packs, sum } 或 null
+      collapsed: false
     };
   }
 
-  /** 利润输入快照：用于判断输入是否有未应用的改动 */
-  function profitSnapshot() {
-    var o = profitInput();
-    o.packs = $("profitPacks") ? String($("profitPacks").value) : "";
-    return JSON.stringify(o);
+  function persistProfitInstances() {
+    try {
+      localStorage.setItem(PROFIT_KEY, JSON.stringify(profitInstances.map(function (p) {
+        return {
+          id: p.id, name: p.name, packs: p.packs, cost: p.cost, salePrice: p.salePrice,
+          targetRate: p.targetRate, platformRate: p.platformRate, blackRate: p.blackRate,
+          subsidyRate: p.subsidyRate, accrualRate: p.accrualRate, refundRate: p.refundRate,
+          linkedPacks: p.linkedPacks, collapsed: p.collapsed
+        };
+      })));
+    } catch (e) { /* 隐私模式忽略 */ }
   }
 
-  /** 有未应用的改动时，按钮文字给出提示 */
-  function markProfitDirty() {
-    var btn = $("profitRun");
-    if (!btn) return;
-    btn.textContent = profitSnapshot() !== lastProfitInput ? "确定测算（输入有改动）" : "确定测算";
+  function loadProfitInstances() {
+    try {
+      var v = JSON.parse(localStorage.getItem(PROFIT_KEY) || "null");
+      if (!Array.isArray(v) || !v.length) return null;
+      return v.map(function (o) {
+        var p = defaultProfitInstance(o.id);
+        Object.keys(p).forEach(function (k) {
+          if (k === "result") return;
+          if (o[k] != null) p[k] = o[k];
+        });
+        return p;
+      });
+    } catch (e) { return null; }
   }
 
-  /** 更新联动状态提示文字 */
-  function renderLinkState() {
-    var el = $("profitLink");
+  function getProfitInstance(id) {
+    return profitInstances.filter(function (p) { return p.id === id; })[0] || null;
+  }
+
+  function activeInstance() {
+    return getProfitInstance(activeProfitId) || profitInstances[0] || null;
+  }
+
+  function addProfitInstance() {
+    var p = defaultProfitInstance();
+    profitInstances.push(p);
+    activeProfitId = p.id;
+    persistProfitInstances();
+    renderProfitList();
+    return p.id;
+  }
+
+  function removeProfitInstance(id) {
+    if (profitInstances.length <= 1) {
+      // 只剩一个时不删除，仅清空
+      var only = profitInstances[0];
+      Object.assign(only, defaultProfitInstance(only.id));
+      persistProfitInstances();
+      renderProfitList();
+      return;
+    }
+    profitInstances = profitInstances.filter(function (p) { return p.id !== id; });
+    if (activeProfitId === id) activeProfitId = profitInstances[profitInstances.length - 1].id;
+    persistProfitInstances();
+    renderProfitList();
+  }
+
+  function setActiveProfit(id) {
+    activeProfitId = id;
+    persistProfitInstances();
+    renderProfitList();
+  }
+
+  function toggleProfitCollapse(id) {
+    var p = getProfitInstance(id);
+    if (!p) return;
+    p.collapsed = !p.collapsed;
+    persistProfitInstances();
+    renderProfitList();
+  }
+
+  /** 输入框改动时把值写回当前激活实例，只标记不重算 */
+  function onProfitFieldInput(id, field) {
+    var p = getProfitInstance(id);
+    if (!p) return;
+    var el = $("pi-" + id + "-" + field);
     if (!el) return;
-    el.textContent = linkedPacks != null
-      ? "已联动明细 " + linkedPacks + " 包行：成本测算变化会自动同步"
-      : "独立测算：包数与成本手动填写";
+    p[field] = el.value;
+    // 手动改包数或成本 → 解除联动
+    if (field === "packs" || field === "cost") {
+      if (p.linkedPacks != null) {
+        p.linkedPacks = null;
+        renderTable(rowsCache, null);
+      }
+    }
+    persistProfitInstances();
+    renderProfitList();
   }
 
-  /** 点击测算明细某一行：带入该行包数与成本，并保持联动 */
+  /** 点击测算明细某一行：带入到当前激活的测算实例 */
   function pickRowFromCost(n) {
     var row = (rowsCache || []).filter(function (r) { return r.packs === n && !r.over; })[0];
     if (!row) return;
-    linkedPacks = n;
-    $("profitPacks").value = String(n);
-    $("profitCost").value = C.money(row.costWith, 2);
+    var p = activeInstance();
+    if (!p) p = getProfitInstance(addProfitInstance());
+    p.packs = String(n);
+    p.cost = C.money(row.costWith, 2);
+    p.linkedPacks = n;
+    persistProfitInstances();
     renderTable(rowsCache, null);
-    renderLinkState();
-    renderProfit(rowsCache);
+    renderProfitList();
   }
 
-  /** 「确定测算」按钮：点击后才按当前输入重新测算 */
+  /** 当前激活实例点「确定测算」 */
   function runProfit() {
-    renderProfit(rowsCache);
+    var p = activeInstance();
+    if (!p) return;
+    renderProfitInstanceResult(p);
+    persistProfitInstances();
+    renderProfitList();
   }
 
-  function renderProfit(rows) {
-    renderProfitInner(rows);
-    // 本次渲染所应用的输入即成为基准；按钮提示随之刷新
-    lastProfitInput = profitSnapshot();
-    markProfitDirty();
-  }
-
-  function renderProfitInner(rows) {
-    // calc.js 版本过旧时不抛异常，给出可操作的提示
-    if (typeof C.computeDiscountRows !== "function" || typeof C.profitSummary !== "function") {
-      $("profitBlocks").innerHTML = '<div class="stat" style="color:#c0392b">' +
-        "calc.js 版本过旧，缺少折扣测算功能。请把 calc.js、app.js、index.html 一起重新上传。</div>";
-      $("profitNote").textContent = "";
-      profitCache = [];
-      return;
+  function renderProfitList() {
+    var container = $("profitList");
+    if (!container) return;
+    if (!profitInstances.length) {
+      var first = defaultProfitInstance();
+      profitInstances.push(first);
+      activeProfitId = first.id;
     }
+    if (!getProfitInstance(activeProfitId)) activeProfitId = profitInstances[0].id;
 
-    // 联动模式：所选行仍在可算范围内时，同步该行的最新成本
-    if (linkedPacks != null) {
-      var linked = (rows || []).filter(function (r) { return r.packs === linkedPacks && !r.over; })[0];
+    // 联动模式下，同步当前激活实例的成本（成本测算变化时）
+    var act = activeInstance();
+    if (act && act.linkedPacks != null) {
+      var linked = (rowsCache || []).filter(function (r) { return r.packs === act.linkedPacks && !r.over; })[0];
       if (linked) {
-        $("profitPacks").value = String(linkedPacks);
-        $("profitCost").value = C.money(linked.costWith, 2);
+        act.packs = String(linked.packs);
+        act.cost = C.money(linked.costWith, 2);
       } else {
-        // 该包数已不可算：解除联动，保留输入框当前值让用户自行处理
-        linkedPacks = null;
-        renderLinkState();
+        act.linkedPacks = null;
         renderTable(rowsCache, null);
       }
     }
 
-    var packs = parseInt($("profitPacks").value, 10);
-    var cost = parseFloat($("profitCost").value);
-    var valid = (rows || []).filter(function (r) { return !r.over; });
+    var html = profitInstances.map(function (p) {
+      return renderProfitInstance(p);
+    }).join("");
+    container.innerHTML = html;
 
-    if (!(packs > 0) || isNaN(cost) || cost < 0) {
-      $("profitBlocks").innerHTML = '<div class="stat">' +
-        (valid.length
-          ? "填写测算包数与成本，或点击上方测算明细的某一行带入"
-          : "当前成本参数下没有可测算的行，可直接手动填写包数与成本") +
-        "</div>";
-      $("profitNote").textContent = "";
-      profitCache = [];
-      return;
-    }
-
-    // 独立模式下按输入框构造成本行；能对上明细行时顺便带上重量
-    var matched = valid.filter(function (r) { return r.packs === packs; })[0];
-    var fakeRow = { packs: packs, costWith: cost, weight: matched ? matched.weight : null };
-    renderProfitBlocks(fakeRow);
+    // 绑定事件
+    profitInstances.forEach(function (p) {
+      ["packs", "cost", "salePrice", "targetRate", "platformRate", "blackRate", "subsidyRate", "accrualRate", "refundRate"].forEach(function (f) {
+        var el = $("pi-" + p.id + "-" + f);
+        if (el) {
+          stopWheel(el);
+          el.addEventListener("input", function () { onProfitFieldInput(p.id, f); });
+        }
+      });
+      var nameEl = $("pi-" + p.id + "-name");
+      if (nameEl) {
+        nameEl.addEventListener("input", function () {
+          p.name = nameEl.value;
+          persistProfitInstances();
+        });
+      }
+    });
   }
 
-  /** 所选包数的折扣测算表 */
-  function renderProfitBlocks(row) {
-    var input = profitInput();
-    var price = parseFloat(input.salePrice);
+  /** 渲染单个实例外壳（含输入区 + 结果区） */
+  function renderProfitInstance(p) {
+    var isActive = p.id === activeProfitId;
+    var linkedTxt = p.linkedPacks != null ? "已联动明细 " + p.linkedPacks + " 包行" : "独立填写";
+    var summary = p.result
+      ? "原价 " + m2(p.result.rows[0].salePrice) + " 元 · 利润率 " + pct(p.result.rows[0].profitRate)
+      : "未测算";
+    return '<div class="profit-instance' + (isActive ? " active" : "") + (p.collapsed ? " collapsed" : "") + '" id="pi-' + p.id + '">' +
+      '<div class="pi-head" onclick="setActiveProfit(\'' + p.id + '\'); toggleProfitCollapse(\'' + p.id + '\')">' +
+      '<span class="pi-title">测算 ' + (profitInstances.indexOf(p) + 1) + "</span>" +
+      (isActive ? '<span class="pi-badge">当前带入</span>' : "") +
+      '<span class="pi-summary">' + esc(linkedTxt) + " · " + esc(summary) + "</span>" +
+      '<span style="flex:1"></span>' +
+      '<button class="ghost small" onclick="event.stopPropagation();removeProfitInstance(\'' + p.id + '\')">删除</button>' +
+      "</div>" +
+      '<div class="pi-body">' +
+      '<div class="fields">' +
+      fieldInput(p.id, "name", "备注名（可选）", p.name, "text") +
+      fieldInput(p.id, "packs", "测算包数（包）", p.packs, "number", "1") +
+      fieldInput(p.id, "cost", "成本/含快递费（元）", p.cost, "number", "0.01") +
+      fieldInput(p.id, "salePrice", "售卖价（整单，元）", p.salePrice, "number", "0.01") +
+      fieldInput(p.id, "targetRate", "目标利润率（%）", p.targetRate, "number", "0.01") +
+      fieldInput(p.id, "platformRate", "平台扣点（%）", p.platformRate, "number", "0.01") +
+      fieldInput(p.id, "blackRate", "黑标扣点（%）", p.blackRate, "number", "0.01") +
+      fieldInput(p.id, "subsidyRate", "百补扣点（%）", p.subsidyRate, "number", "0.01") +
+      fieldInput(p.id, "accrualRate", "计提费比（%）", p.accrualRate, "number", "0.01") +
+      fieldInput(p.id, "refundRate", "退款率（%）", p.refundRate, "number", "0.01") +
+      "</div>" +
+      '<div class="pi-toolbar">' +
+      '<button class="small" onclick="runProfitInstance(\'' + p.id + '\')">确定测算</button>' +
+      '<span class="hint">' + esc(linkedTxt) + "</span>" +
+      "</div>" +
+      '<div id="pi-result-' + p.id + '" class="profit-result">' + renderProfitInstanceResultHtml(p) + "</div>" +
+      "</div></div>";
+  }
+
+  function fieldInput(id, field, label, value, type, step) {
+    var v = value == null ? "" : value;
+    return '<label class="field">' + esc(label) +
+      '<input id="pi-' + id + "-" + field + '" type="' + type + '"' +
+      (step ? ' step="' + step + '"' : "") +
+      ' value="' + esc(v) + '">' +
+      "</label>";
+  }
+
+  /** 计算并写回某实例结果（纯数据，不触碰 DOM） */
+  function computeProfitInstance(p) {
+    var input = {
+      salePrice: p.salePrice,
+      targetRate: p.targetRate,
+      platformRate: p.platformRate,
+      blackRate: p.blackRate,
+      subsidyRate: p.subsidyRate,
+      accrualRate: p.accrualRate,
+      refundRate: p.refundRate,
+      profitCost: p.cost
+    };
+    var packs = parseInt(p.packs, 10);
+    var cost = parseFloat(p.cost);
+    var valid = (rowsCache || []).filter(function (r) { return !r.over; });
+    if (!(packs > 0) || isNaN(cost) || cost < 0 || !(parseFloat(p.salePrice) > 0)) {
+      p.result = null;
+      return;
+    }
+    var matched = valid.filter(function (r) { return r.packs === packs; })[0];
+    var row = { packs: packs, costWith: cost, weight: matched ? matched.weight : null };
     var sum = C.profitSummary(input);
-
-    if (!(price > 0)) {
-      $("profitBlocks").innerHTML = '<div class="stat">填写整单售卖价（元）后自动测算</div>';
-      $("profitNote").textContent = "";
-      profitCache = [];
-      return;
-    }
-
     var list = C.computeDiscountRows(row, input);
-    if (!list.length) {
-      $("profitBlocks").innerHTML = '<div class="stat">无可用数据</div>';
-      $("profitNote").textContent = "";
-      profitCache = [];
-      return;
-    }
+    if (!list.length) { p.result = null; return; }
+    p.result = { packs: packs, weight: row.weight, cost: cost, rows: list, sum: sum };
+  }
 
-    var body = list.map(function (d) {
+  function renderProfitInstanceResult(p) {
+    computeProfitInstance(p);
+    var el = $("pi-result-" + p.id);
+    if (el) el.innerHTML = renderProfitInstanceResultHtml(p);
+  }
+
+  function runProfitInstance(id) {
+    var p = getProfitInstance(id);
+    if (!p) return;
+    activeProfitId = id;
+    renderProfitInstanceResult(p);
+    persistProfitInstances();
+    renderProfitList();
+  }
+
+  function renderProfitInstanceResultHtml(p) {
+    if (!p.result) {
+      return '<div class="hint" style="margin-top:8px">' +
+        (parseFloat(p.salePrice) > 0 ? "填写包数与成本后点「确定测算」" : "填写包数、成本、售卖价后点「确定测算」") +
+        "</div>";
+    }
+    var r = p.result;
+    var wTxt = r.weight != null ? C.formatNum(r.weight, 3) + " kg · " : "";
+    var first = r.rows[0];
+    var body = r.rows.map(function (d) {
       var profitAmount = d.settlement != null ? d.settlement - d.cost : null;
       var cls = d.loss ? "loss" : "";
       var roiTxt = d.breakEvenRoi == null ? "—" : d.breakEvenRoi.toFixed(2);
@@ -342,23 +499,16 @@
         '<td class="num">' + roiTxt + "</td>" +
         "</tr>";
     }).join("");
-
-    profitCache = [{ packs: row.packs, weight: row.weight, cost: row.costWith, rows: list }];
-
-    var wTxt = row.weight != null ? C.formatNum(row.weight, 3) + " kg · " : "";
-    var first = list[0];
-    // 保本售价与目标利润率反推售价
     var target = first.targetPrice;
     var targetTxt = target != null
-      ? m2(target) + " 元（单包 " + m2(row.packs > 0 ? target / row.packs : null) + " 元）"
+      ? m2(target) + " 元（单包 " + m2(r.packs > 0 ? target / r.packs : null) + " 元）"
       : "—";
-    $("profitBlocks").innerHTML =
-      '<div class="profit-block">' +
-      '<div class="profit-head">' + row.packs + " 包" +
-      '<span class="sub">' + wTxt + "成本 " + m2(row.costWith) + " 元 · 原价 " +
+    return '<div class="profit-block" style="margin-top:10px">' +
+      '<div class="profit-head">' + r.packs + " 包" +
+      '<span class="sub">' + wTxt + "成本 " + m2(r.cost) + " 元 · 原价 " +
       m2(first.salePrice) + " 元（单包 " + m2(first.unitPrice) + " 元）</span></div>" +
       '<div class="stat-row" style="padding:10px 12px;background:#fafbfd">' +
-      stat("保本售价", m2(first.breakEvenPrice) + " 元", "成本 × (1 + 合计费比 " + pct(sum.totalRate) + ")，低于此价亏损") +
+      stat("保本售价", m2(first.breakEvenPrice) + " 元", "成本 × (1 + 合计费比 " + pct(r.sum.totalRate) + ")，低于此价亏损") +
       stat("目标利润率 " + (first.targetRate != null ? pct(first.targetRate) : "未填"),
         targetTxt,
         first.targetRate != null
@@ -370,11 +520,6 @@
       "<th class=\"num\">结算价/元</th><th class=\"num\">利润额/元</th>" +
       "<th class=\"num\">利润率</th><th class=\"num\">保本ROI</th>" +
       "</tr></thead><tbody>" + body + "</tbody></table></div></div>";
-
-    $("profitNote").innerHTML =
-      "含百补综合扣点 " + pct(sum.combinedSubsidy) + "，计提费比 " + pct(C.num(input.accrualRate) / 100) +
-      "，合计费比 " + pct(sum.totalRate) + "，退款率 " + pct(C.num(input.refundRate) / 100) +
-      "；结算价 = 售价 − 成本 × 合计费比；利润率 = (结算价 − 成本) ÷ 结算价；保本 ROI = 1 ÷ 利润率 ÷ (1 − 退款率)。";
   }
 
   function renderSummary(s, params) {
@@ -397,11 +542,14 @@
   }
 
   function renderTable(rows, s) {
+    // 当前激活实例联动的包数
+    var act = activeInstance();
+    var actLinked = act ? act.linkedPacks : null;
     var html = rows.map(function (r) {
       var cls = r.over ? "over" : (bestPacks === r.packs ? "best" : "");
-      if (linkedPacks === r.packs) cls = (cls ? cls + " " : "") + "picked";
+      if (actLinked === r.packs) cls = (cls ? cls + " " : "") + "picked";
       var mark = bestPacks === r.packs ? '<span class="badge">最低</span>' : "";
-      if (linkedPacks === r.packs) mark += '<span class="badge warn">已带入</span>';
+      if (actLinked === r.packs) mark += '<span class="badge warn">已带入</span>';
       var isStack = r.mode === "stack";
       var modeTxt = isStack
         ? '<span class="badge warn">' + esc(r.tier) + "</span>"
@@ -615,19 +763,23 @@
 
   /* ---------------- 利润测算导出 ---------------- */
   function profitHeader() {
-    return ["包数", "克重/kg", "成本/含快递费", "折扣", "整单价/元", "单包价/元",
+    return ["测算编号", "备注", "包数", "克重/kg", "成本/含快递费", "折扣", "整单价/元", "单包价/元",
       "结算价/元", "利润额/元", "利润率", "保本ROI"];
   }
 
+  /** 汇总所有已测算实例的结果行 */
   function profitBody() {
     var out = [];
-    (profitCache || []).forEach(function (block) {
-      block.rows.forEach(function (d) {
+    profitInstances.forEach(function (p) {
+      if (!p.result) return;
+      p.result.rows.forEach(function (d) {
         var profitAmount = d.settlement != null ? d.settlement - d.cost : null;
         out.push([
-          block.packs,
-          C.formatNum(block.weight, 3),
-          m2(block.cost),
+          profitInstances.indexOf(p) + 1,
+          p.name || "",
+          p.result.packs,
+          p.result.weight != null ? C.formatNum(p.result.weight, 3) : "—",
+          m2(p.result.cost),
           d.label,
           m2(d.salePrice),
           m2(d.unitPrice),
@@ -642,9 +794,10 @@
   }
 
   function exportProfitCsv() {
-    if (!profitCache.length) return alert("请先勾选包数并填写售卖价");
+    var body = profitBody();
+    if (!body.length) return alert("请先对至少一个测算区点「确定测算」");
     var lines = [profitHeader().join(",")];
-    profitBody().forEach(function (row) {
+    body.forEach(function (row) {
       lines.push(row.map(function (v) {
         var t = String(v);
         return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
@@ -654,15 +807,16 @@
   }
 
   function exportProfitExcel() {
-    if (!profitCache.length) return alert("请先勾选包数并填写售卖价");
+    var body = profitBody();
+    if (!body.length) return alert("请先对至少一个测算区点「确定测算」");
     var head = "<tr>" + profitHeader().map(function (h) { return '<th style="background:#f0f3f7">' + esc(h) + "</th>"; }).join("") + "</tr>";
-    var body = profitBody().map(function (row) {
+    var bodyHtml = body.map(function (row) {
       return "<tr>" + row.map(function (v) { return "<td>" + esc(v) + "</td>"; }).join("") + "</tr>";
     }).join("");
     var html =
       '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">' +
       '<head><meta charset="utf-8"><style>td,th{border:1px solid #ccc;padding:4px 8px;font-family:"Microsoft YaHei";font-size:12px}</style></head>' +
-      "<body><table><thead>" + head + "</thead><tbody>" + body + "</tbody></table></body></html>";
+      "<body><table><thead>" + head + "</thead><tbody>" + bodyHtml + "</tbody></table></body></html>";
     download("利润测算-" + stamp() + ".xls", "\uFEFF" + html, "application/vnd.ms-excel;charset=utf-8");
   }
 
@@ -688,17 +842,7 @@
       tiers: tiers.map(function (t) { return { max: t.max, fee: t.fee }; }),
       casePacks: $("casePacks").value,
       caseWeight: $("caseWeight").value,
-      caseCost: $("caseCost").value,
-      salePrice: $("salePrice").value,
-      targetRate: $("targetRate").value,
-      profitPacks: $("profitPacks").value,
-      profitCost: $("profitCost").value,
-      linkedPacks: linkedPacks,
-      ratePlatform: $("ratePlatform").value,
-      rateBlack: $("rateBlack").value,
-      rateSubsidy: $("rateSubsidy").value,
-      rateAccrual: $("rateAccrual").value,
-      rateRefund: $("rateRefund").value
+      caseCost: $("caseCost").value
     };
   }
 
@@ -731,25 +875,17 @@
     if (c.casePacks != null) $("casePacks").value = c.casePacks;
     if (c.caseWeight != null) $("caseWeight").value = c.caseWeight;
     if (c.caseCost != null) $("caseCost").value = c.caseCost;
-    if (c.salePrice != null) $("salePrice").value = c.salePrice;
-    if (c.targetRate != null) $("targetRate").value = c.targetRate;
-    if (c.profitPacks != null) $("profitPacks").value = c.profitPacks;
-    if (c.profitCost != null) $("profitCost").value = c.profitCost;
-    if (c.ratePlatform != null) $("ratePlatform").value = c.ratePlatform;
-    if (c.rateBlack != null) $("rateBlack").value = c.rateBlack;
-    if (c.rateSubsidy != null) $("rateSubsidy").value = c.rateSubsidy;
-    if (c.rateAccrual != null) $("rateAccrual").value = c.rateAccrual;
-    if (c.rateRefund != null) $("rateRefund").value = c.rateRefund;
     if (Array.isArray(c.tiers) && c.tiers.length) {
       tiers = c.tiers.map(function (t) { return { max: t.max, fee: t.fee }; });
     }
     $("schemeName").value = name;
-    // 换方案后解除明细行联动，回到独立测算
-    linkedPacks = null;
-    renderLinkState();
+    // 换方案后清除所有利润实例的明细行联动
+    profitInstances.forEach(function (p) { p.linkedPacks = null; });
+    persistProfitInstances();
     renderTiers();
     renderCase();
     render();
+    renderProfitList();
   }
 
   function deleteScheme() {
@@ -849,17 +985,7 @@
         tiers: tiers.map(function (t) { return { max: t.max, fee: t.fee }; }),
         casePacks: $("casePacks").value,
         caseWeight: $("caseWeight").value,
-        caseCost: $("caseCost").value,
-        salePrice: $("salePrice").value,
-        targetRate: $("targetRate").value,
-        profitPacks: $("profitPacks").value,
-        profitCost: $("profitCost").value,
-        linkedPacks: linkedPacks,
-        ratePlatform: $("ratePlatform").value,
-        rateBlack: $("rateBlack").value,
-        rateSubsidy: $("rateSubsidy").value,
-        rateAccrual: $("rateAccrual").value,
-        rateRefund: $("rateRefund").value
+        caseCost: $("caseCost").value
       }));
     } catch (e) { /* 隐私模式忽略 */ }
   }
@@ -878,16 +1004,6 @@
     if (raw.casePacks != null) $("casePacks").value = raw.casePacks;
     if (raw.caseWeight != null) $("caseWeight").value = raw.caseWeight;
     if (raw.caseCost != null) $("caseCost").value = raw.caseCost;
-    if (raw.salePrice != null) $("salePrice").value = raw.salePrice;
-    if (raw.targetRate != null) $("targetRate").value = raw.targetRate;
-    if (raw.profitPacks != null) $("profitPacks").value = raw.profitPacks;
-    if (raw.profitCost != null) $("profitCost").value = raw.profitCost;
-    if (raw.linkedPacks != null) linkedPacks = raw.linkedPacks;
-    if (raw.ratePlatform != null) $("ratePlatform").value = raw.ratePlatform;
-    if (raw.rateBlack != null) $("rateBlack").value = raw.rateBlack;
-    if (raw.rateSubsidy != null) $("rateSubsidy").value = raw.rateSubsidy;
-    if (raw.rateAccrual != null) $("rateAccrual").value = raw.rateAccrual;
-    if (raw.rateRefund != null) $("rateRefund").value = raw.rateRefund;
     tiers = Array.isArray(raw.tiers) && raw.tiers.length
       ? raw.tiers.map(function (t) { return { max: t.max, fee: t.fee }; })
       : C.DEFAULT_TIERS.map(function (t) { return { max: t.max, fee: t.fee }; });
@@ -898,12 +1014,10 @@
     checkVersion();
     initFold();
 
-    // 所有数字输入框禁用滚轮改值，避免滚动页面时误改参数
+    // 所有数字输入框禁用滚轮改值，避免滚动页面时误改参数（成本测算参数区）
     [
       "unitWeight", "baseCost", "count",
-      "casePacks", "caseWeight", "caseCost",
-      "salePrice", "profitPacks", "profitCost", "targetRate",
-      "ratePlatform", "rateBlack", "rateSubsidy", "rateAccrual", "rateRefund"
+      "casePacks", "caseWeight", "caseCost"
     ].forEach(function (id) { stopWheel($(id)); });
 
     restoreLast();
@@ -918,21 +1032,16 @@
       $(id).addEventListener("input", function () { renderCase(); render(); });
     });
     $("stackEnabled").addEventListener("change", render);
-    // 利润测算：输入只做「有改动」标记，点「确定测算」才重算
-    ["salePrice", "targetRate", "ratePlatform", "rateBlack", "rateSubsidy", "rateAccrual", "rateRefund"].forEach(function (id) {
-      $(id).addEventListener("input", markProfitDirty);
-    });
-    // 手动改包数或成本 → 解除明细行联动，进入独立测算
-    ["profitPacks", "profitCost"].forEach(function (id) {
-      $(id).addEventListener("input", function () {
-        if (linkedPacks != null) {
-          linkedPacks = null;
-          renderLinkState();
-          renderTable(rowsCache, null);
-        }
-        markProfitDirty();
-      });
-    });
+
+    // 利润测算多实例：加载历史实例，没有则建一个默认实例
+    var saved = loadProfitInstances();
+    if (saved) {
+      profitInstances = saved;
+    } else {
+      var first = defaultProfitInstance();
+      profitInstances = [first];
+    }
+    activeProfitId = profitInstances[0].id;
 
     // 暴露给内联 onclick
     window.addTier = addTier;
@@ -941,6 +1050,11 @@
     window.applyCase = applyCase;
     window.pickRowFromCost = pickRowFromCost;
     window.runProfit = runProfit;
+    window.addProfitInstance = addProfitInstance;
+    window.removeProfitInstance = removeProfitInstance;
+    window.setActiveProfit = setActiveProfit;
+    window.toggleProfitCollapse = toggleProfitCollapse;
+    window.runProfitInstance = runProfitInstance;
     window.toggleSection = toggleSection;
     window.toggleAllSections = toggleAllSections;
     window.saveScheme = saveScheme;
@@ -951,9 +1065,19 @@
     window.exportProfitCsv = exportProfitCsv;
     window.exportProfitExcel = exportProfitExcel;
 
+    // 供测试与调试读取的只读状态接口
+    window.__profitState = function () {
+      return {
+        instances: profitInstances.map(function (p) {
+          return { id: p.id, name: p.name, packs: p.packs, cost: p.cost, linkedPacks: p.linkedPacks, hasResult: !!p.result };
+        }),
+        activeId: activeProfitId
+      };
+    };
+
     renderCase();
     render();
-    renderLinkState();
+    renderProfitList();
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
