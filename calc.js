@@ -10,7 +10,7 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  var VERSION = "1.11.0";
+  var VERSION = "1.12.0";
   var EPS = 1e-9;
 
   var DEFAULT_TIERS = [
@@ -261,6 +261,17 @@
     };
   }
 
+  /** 有效成本：退款率折入成本，退款那部分货的成本摊到实际成交的货上
+   *  有效成本 = 成本 ÷ (1 − 退款率)
+   */
+  function effectiveCostOf(cost, refundRate) {
+    if (cost == null || isNaN(cost) || cost < 0) return null;
+    var r = num(refundRate) / 100;
+    if (isNaN(r) || r < 0) r = 0;
+    if (r >= 1) return null; // 100% 退款无意义
+    return cost / (1 - r);
+  }
+
   /** 利润测算：逐行套用参考表公式
    *  计价方式 priceMode：
    *    "total" 按整单报价 → 售卖价取 salePrice，单包售价 = 售卖价 ÷ 包数
@@ -268,10 +279,11 @@
    *  单包售价 = 售卖价 ÷ 包数
    *  含百补综合扣点 = 平台扣点 + 黑标扣点 + 百补扣点
    *  合计费比 = 含百补综合扣点 + 计提费比
-   *  结算价 = 售卖价 − 成本 × 合计费比
-   *  利润率 = (结算价 − 成本) ÷ 结算价
+   *  有效成本 = 成本 ÷ (1 − 退款率)
+   *  结算价 = 售卖价 − 有效成本 × 合计费比
+   *  利润率 = (结算价 − 有效成本) ÷ 结算价
    *  保本 ROI = 1 ÷ 利润率 ÷ (1 − 退款率)
-   *  保本售价 = 成本 × (1 + 合计费比)
+   *  保本售价 = 有效成本 × (1 + 合计费比)
    */
   function computeProfitRows(costRows, input) {
     var mode = input.priceMode === "unit" ? "unit" : "total";
@@ -289,6 +301,7 @@
 
     return (costRows || []).map(function (r) {
       var cost = r.costWith;
+      var effectiveCost = effectiveCostOf(cost, num(input.refundRate));
       // 每一包都按当前计价方式折算成该行的整单售价
       var salePrice = mode === "unit" ? unitPriceInput * r.packs : totalPrice;
       var perUnit = mode === "unit"
@@ -299,6 +312,7 @@
         packs: r.packs,
         over: !!r.over,
         cost: cost,
+        effectiveCost: effectiveCost,
         priceMode: mode,
         salePrice: hasPrice ? salePrice : null,
         unitPrice: hasPrice ? perUnit : null,
@@ -308,18 +322,19 @@
         accrual: accrual,
         combinedSubsidy: combinedSubsidy,
         totalRate: totalRate,
+        refundRate: refund,
         settlement: null,
         profitRate: null,
         breakEvenRoi: null,
         breakEvenPrice: null
       };
-      if (cost == null || !hasPrice) return out;
+      if (cost == null || effectiveCost == null || !hasPrice) return out;
 
-      var settlement = salePrice - cost * totalRate;
+      var settlement = salePrice - effectiveCost * totalRate;
       out.settlement = settlement;
-      out.breakEvenPrice = cost * (1 + totalRate);
+      out.breakEvenPrice = effectiveCost * (1 + totalRate);
       if (settlement > 0) {
-        var pr = (settlement - cost) / settlement;
+        var pr = (settlement - effectiveCost) / settlement;
         out.profitRate = pr;
         if (pr > 0 && keep > 0) out.breakEvenRoi = 1 / pr / keep;
       }
@@ -357,7 +372,7 @@
     var base = computeProfitRows([costRow], input)[0];
     if (!base || base.cost == null || base.salePrice == null) return [];
     var keep = 1 - num(input.refundRate) / 100;
-    var cost = base.cost;
+    var cost = base.effectiveCost;   // 退款已折入的有效成本
     var rate = base.totalRate;
     var packs = base.packs;
     var discounts = (input && Array.isArray(input.discounts) && input.discounts.length)
@@ -475,6 +490,7 @@
     targetPriceOf: targetPriceOf,
     targetListPriceOf: targetListPriceOf,
     normalizeDiscount: normalizeDiscount,
+    effectiveCostOf: effectiveCostOf,
     discountLabel: discountLabel,
     DISCOUNTS: DISCOUNTS,
     freightDetail: freightDetail,

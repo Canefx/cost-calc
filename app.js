@@ -7,8 +7,8 @@
   var SCHEME_KEY = "cost_calc_schemes_v1";
 
   // 版本号：三个文件必须同版本，否则功能会缺失
-  var APP_VERSION = "1.11.0";
-  var CALC_VERSION = "1.11.0";
+  var APP_VERSION = "1.12.0";
+  var CALC_VERSION = "1.12.0";
 
   // 档位以「上限 + 运费」存储，起点由上一档上限推导
   var tiers = [];
@@ -432,15 +432,20 @@
     }
 
     var p = targetRate / 100;
-    var listPrice = C.targetListPriceOf(cost, sum.totalRate, discount, p);
+    var effectiveCost = C.effectiveCostOf(cost, C.num(input.refundRate));
+    if (effectiveCost == null) {
+      out.innerHTML = '<div class="stat">退款率需小于 100%</div>';
+      return;
+    }
+    var listPrice = C.targetListPriceOf(effectiveCost, sum.totalRate, discount, p);
     if (listPrice == null) {
       out.innerHTML = '<div class="stat">无法计算，请检查输入</div>';
       return;
     }
     var salePrice = listPrice * discount;      // 折后价
-    var settlement = salePrice - cost * sum.totalRate;
-    var profitAmount = settlement - cost;
-    var profitRate = settlement > 0 ? (settlement - cost) / settlement : null;
+    var settlement = salePrice - effectiveCost * sum.totalRate;
+    var profitAmount = settlement - effectiveCost;
+    var profitRate = settlement > 0 ? (settlement - effectiveCost) / settlement : null;
     var keep = 1 - C.num(input.refundRate) / 100;
     var roi = (profitRate != null && profitRate > 0 && keep > 0) ? 1 / profitRate / keep : null;
     var unitList = packs > 0 ? listPrice / packs : null;
@@ -454,14 +459,16 @@
       stat("需定价（原价）", m2(listPrice) + " 元", "单包 " + m2(unitList) + " 元") +
       stat("折后售价（" + C.discountLabel(discount) + "）", m2(salePrice) + " 元", "单包 " + m2(unitSale) + " 元") +
       stat("目标利润率", rateTxt, "目标折扣 " + C.discountLabel(discount) + " 下达成") +
-      stat("结算价", m2(settlement) + " 元", "折后价 − 成本 × 合计费比 " + pct(sum.totalRate)) +
+      stat("有效成本", m2(effectiveCost) + " 元", "成本 " + m2(cost) + " ÷ (1 − 退款率 " + pct(C.num(input.refundRate) / 100) + ")") +
+      stat("结算价", m2(settlement) + " 元", "折后价 − 有效成本 × 合计费比 " + pct(sum.totalRate)) +
       stat("单包利润", m2(profitAmount / packs) + " 元", "合计利润 " + m2(profitAmount) + " 元") +
       stat("实际利润率", pct(profitRate), loss ? "低于成本，亏损" : "按当前定价计算") +
       stat("保本 ROI", roi == null ? "—" : roi.toFixed(2), "退款率 " + pct(C.num(input.refundRate) / 100)) +
       "</div>" +
       '<div class="hint" style="margin-top:10px">' +
       "含百补综合扣点 " + pct(sum.combinedSubsidy) + "，计提费比 " + pct(C.num(input.accrualRate) / 100) +
-      "，合计费比 " + pct(sum.totalRate) + "；标价 = 成本 × (费比 + 1÷(1−利润率)) ÷ 折扣率。折后价 = 标价 × 折扣率。" +
+      "，合计费比 " + pct(sum.totalRate) + "，退款率 " + pct(C.num(input.refundRate) / 100) +
+      "；有效成本 = 成本 ÷ (1−退款率)；标价 = 有效成本 × (费比 + 1÷(1−利润率)) ÷ 折扣率。" +
       "</div>";
   }
 
@@ -668,7 +675,8 @@
     var sum = C.profitSummary(input);
     var list = C.computeDiscountRows(row, input);
     if (!list.length) { p.result = null; return; }
-    p.result = { packs: packs, weight: row.weight, cost: cost, rows: list, sum: sum };
+    var effCost = C.effectiveCostOf(cost, C.num(p.refundRate));
+    p.result = { packs: packs, weight: row.weight, cost: cost, effectiveCost: effCost, rows: list, sum: sum };
   }
 
   function renderProfitInstanceResult(p) {
@@ -713,16 +721,19 @@
     var targetTxt = target != null
       ? m2(target) + " 元（单包 " + m2(r.packs > 0 ? target / r.packs : null) + " 元）"
       : "—";
+    var costTxt = r.effectiveCost != null && Math.abs(r.effectiveCost - r.cost) > 1e-9
+      ? "成本 " + m2(r.cost) + " 元 · 有效成本 " + m2(r.effectiveCost) + " 元"
+      : "成本 " + m2(r.cost) + " 元";
     return '<div class="profit-block" style="margin-top:10px">' +
       '<div class="profit-head">' + r.packs + " 包" +
-      '<span class="sub">' + wTxt + "成本 " + m2(r.cost) + " 元 · 原价 " +
+      '<span class="sub">' + wTxt + esc(costTxt) + " · 原价 " +
       m2(first.salePrice) + " 元（单包 " + m2(first.unitPrice) + " 元）</span></div>" +
       '<div class="stat-row" style="padding:10px 12px;background:#fafbfd">' +
-      stat("保本售价", m2(first.breakEvenPrice) + " 元", "成本 × (1 + 合计费比 " + pct(r.sum.totalRate) + ")，低于此价亏损") +
+      stat("保本售价", m2(first.breakEvenPrice) + " 元", "有效成本 × (1 + 合计费比 " + pct(r.sum.totalRate) + ")，低于此价亏损") +
       stat("目标利润率 " + (first.targetRate != null ? pct(first.targetRate) : "未填"),
         targetTxt,
         first.targetRate != null
-          ? "按当前成本与费比反推；售价 = 成本 × (1 + 费比 − 利润率×费比) ÷ (1 − 利润率)"
+          ? "按有效成本与费比反推；售价 = 有效成本 × (1 + 费比 − 利润率×费比) ÷ (1 − 利润率)"
           : "填写目标利润率后显示需定价") +
       "</div>" +
       '<div class="table-wrap"><table><thead><tr>' +
