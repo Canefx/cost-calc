@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="app-version" content="1.10.0">
+<meta name="app-version" content="1.11.0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>包装成本测算系统</title>
 <style>
@@ -323,6 +323,50 @@
       <button onclick="exportProfitCsv()">导出利润测算 CSV</button>
       <button class="secondary" onclick="exportProfitExcel()">导出利润测算 Excel</button>
     </div>
+    </div>
+  </section>
+
+  <!-- 标价反推（目标折扣 × 目标利润率） -->
+  <section class="card collapsed" id="sec-price">
+    <div class="card-head" onclick="toggleSection('sec-price')">
+      <h2>标价反推 <span class="tag">目标折扣 × 目标利润率 → 定价</span></h2>
+      <span class="fold-arrow">&#9662;</span>
+    </div>
+    <div class="card-body">
+    <div class="fields">
+      <label class="field">测算包数（包）
+        <input id="lpPacks" type="number" step="1" min="1" placeholder="如 20">
+      </label>
+      <label class="field">成本/含快递费（元）
+        <input id="lpCost" type="number" step="0.01" min="0" placeholder="自填或点击明细行带入">
+      </label>
+      <label class="field">目标折扣
+        <input id="lpDiscount" type="number" step="0.01" min="0.01" max="10" placeholder="如 7 或 0.7">
+      </label>
+      <label class="field">目标利润率（%，选填）
+        <input id="lpTargetRate" type="number" step="0.01" min="0" max="99" placeholder="如 30">
+      </label>
+      <label class="field">平台扣点（%）
+        <input id="lpPlatformRate" type="number" step="0.01" min="0" value="5">
+      </label>
+      <label class="field">黑标扣点（%）
+        <input id="lpBlackRate" type="number" step="0.01" min="0" value="0">
+      </label>
+      <label class="field">百补扣点（%）
+        <input id="lpSubsidyRate" type="number" step="0.01" min="0" value="0">
+      </label>
+      <label class="field">计提费比（%）
+        <input id="lpAccrualRate" type="number" step="0.01" min="0" value="0">
+      </label>
+      <label class="field">退款率（%）
+        <input id="lpRefundRate" type="number" step="0.01" min="0" max="99" value="10">
+      </label>
+    </div>
+    <div class="toolbar no-print" style="margin-top:12px">
+      <button id="lpRun" onclick="runListPrice()">确定测算</button>
+      <span id="lpLink" class="hint" style="align-self:center">独立填写；点击上方「测算明细」某一行可带入包数与成本</span>
+    </div>
+    <div id="lpResult" style="margin-top:14px"></div>
     </div>
   </section>
 </main>

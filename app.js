@@ -7,8 +7,8 @@
   var SCHEME_KEY = "cost_calc_schemes_v1";
 
   // 版本号：三个文件必须同版本，否则功能会缺失
-  var APP_VERSION = "1.10.0";
-  var CALC_VERSION = "1.10.0";
+  var APP_VERSION = "1.11.0";
+  var CALC_VERSION = "1.11.0";
 
   // 档位以「上限 + 运费」存储，起点由上一档上限推导
   var tiers = [];
@@ -17,6 +17,8 @@
   var profitInstances = [];
   var activeProfitId = null;
   var bestPacks = null;
+  // 标价反推板块：联动包数
+  var lpLinkedPacks = null;
 
   var $ = function (id) { return document.getElementById(id); };
   var esc = function (s) {
@@ -157,7 +159,21 @@
     renderChart(rows, s.best);
     renderTable(rows, s);
     renderProfitList();
+    syncListPriceLink(rows);
     persistLast(params);
+  }
+
+  /** 成本测算变化时，同步标价反推板块的联动成本 */
+  function syncListPriceLink(rows) {
+    if (lpLinkedPacks == null) return;
+    var linked = (rows || []).filter(function (r) { return r.packs === lpLinkedPacks && !r.over; })[0];
+    if (linked) {
+      $("lpPacks").value = String(linked.packs);
+      $("lpCost").value = C.money(linked.costWith, 2);
+    } else {
+      lpLinkedPacks = null;
+      renderLpLinkState();
+    }
   }
 
   /* ---------------- 利润测算 ---------------- */
@@ -332,7 +348,7 @@
     head.textContent = linkedTxt + " · " + summary;
   }
 
-  /** 点击测算明细某一行：带入到当前激活的测算实例 */
+  /** 点击测算明细某一行：带入到当前激活的测算实例，同时同步到标价反推板块 */
   function pickRowFromCost(n) {
     var row = (rowsCache || []).filter(function (r) { return r.packs === n && !r.over; })[0];
     if (!row) return;
@@ -344,6 +360,14 @@
     persistProfitInstances();
     renderTable(rowsCache, null);
     renderProfitList();
+
+    // 同步到标价反推板块（若该板块处于联动状态）
+    if (lpLinkedPacks != null) {
+      $("lpPacks").value = String(n);
+      $("lpCost").value = C.money(row.costWith, 2);
+      lpLinkedPacks = n;
+      renderLpLinkState();
+    }
   }
 
   /** 当前激活实例点「确定测算」 */
@@ -353,6 +377,92 @@
     renderProfitInstanceResult(p);
     persistProfitInstances();
     renderProfitList();
+  }
+
+  /* ---------------- 标价反推板块 ---------------- */
+  function lpInput() {
+    return {
+      packs: $("lpPacks").value,
+      cost: $("lpCost").value,
+      discount: $("lpDiscount").value,
+      targetRate: $("lpTargetRate").value,
+      platformRate: $("lpPlatformRate").value,
+      blackRate: $("lpBlackRate").value,
+      subsidyRate: $("lpSubsidyRate").value,
+      accrualRate: $("lpAccrualRate").value,
+      refundRate: $("lpRefundRate").value
+    };
+  }
+
+  function renderLpLinkState() {
+    var el = $("lpLink");
+    if (!el) return;
+    el.textContent = lpLinkedPacks != null
+      ? "已联动明细 " + lpLinkedPacks + " 包行：成本测算变化会自动同步"
+      : "独立填写；点击上方「测算明细」某一行可带入包数与成本";
+  }
+
+  function runListPrice() {
+    var input = lpInput();
+    var packs = parseInt(input.packs, 10);
+    var cost = parseFloat(input.cost);
+    var discount = C.normalizeDiscount(input.discount);
+    var targetRate = input.targetRate === "" || input.targetRate == null ? 0 : parseFloat(input.targetRate);
+    var sum = C.profitSummary({
+      platformRate: input.platformRate,
+      blackRate: input.blackRate,
+      subsidyRate: input.subsidyRate,
+      accrualRate: input.accrualRate
+    });
+
+    var out = $("lpResult");
+    if (!out) return;
+
+    if (!(packs > 0) || isNaN(cost) || cost < 0) {
+      out.innerHTML = '<div class="stat">请填写包数与成本，或点击上方「测算明细」某一行带入</div>';
+      return;
+    }
+    if (discount == null) {
+      out.innerHTML = '<div class="stat">请填写目标折扣（0.01~10，如 7 表示 7 折）</div>';
+      return;
+    }
+    if (isNaN(targetRate) || targetRate < 0 || targetRate >= 100) {
+      out.innerHTML = '<div class="stat">目标利润率需在 0~100 之间（留空表示保本）</div>';
+      return;
+    }
+
+    var p = targetRate / 100;
+    var listPrice = C.targetListPriceOf(cost, sum.totalRate, discount, p);
+    if (listPrice == null) {
+      out.innerHTML = '<div class="stat">无法计算，请检查输入</div>';
+      return;
+    }
+    var salePrice = listPrice * discount;      // 折后价
+    var settlement = salePrice - cost * sum.totalRate;
+    var profitAmount = settlement - cost;
+    var profitRate = settlement > 0 ? (settlement - cost) / settlement : null;
+    var keep = 1 - C.num(input.refundRate) / 100;
+    var roi = (profitRate != null && profitRate > 0 && keep > 0) ? 1 / profitRate / keep : null;
+    var unitList = packs > 0 ? listPrice / packs : null;
+    var unitSale = packs > 0 ? salePrice / packs : null;
+
+    var rateTxt = (targetRate > 0) ? (targetRate.toFixed(2) + "%") : "保本";
+    var loss = profitRate != null && profitRate < 0;
+
+    out.innerHTML =
+      '<div class="stat-row">' +
+      stat("需定价（原价）", m2(listPrice) + " 元", "单包 " + m2(unitList) + " 元") +
+      stat("折后售价（" + C.discountLabel(discount) + "）", m2(salePrice) + " 元", "单包 " + m2(unitSale) + " 元") +
+      stat("目标利润率", rateTxt, "目标折扣 " + C.discountLabel(discount) + " 下达成") +
+      stat("结算价", m2(settlement) + " 元", "折后价 − 成本 × 合计费比 " + pct(sum.totalRate)) +
+      stat("单包利润", m2(profitAmount / packs) + " 元", "合计利润 " + m2(profitAmount) + " 元") +
+      stat("实际利润率", pct(profitRate), loss ? "低于成本，亏损" : "按当前定价计算") +
+      stat("保本 ROI", roi == null ? "—" : roi.toFixed(2), "退款率 " + pct(C.num(input.refundRate) / 100)) +
+      "</div>" +
+      '<div class="hint" style="margin-top:10px">' +
+      "含百补综合扣点 " + pct(sum.combinedSubsidy) + "，计提费比 " + pct(C.num(input.accrualRate) / 100) +
+      "，合计费比 " + pct(sum.totalRate) + "；标价 = 成本 × (费比 + 1÷(1−利润率)) ÷ 折扣率。折后价 = 标价 × 折扣率。" +
+      "</div>";
   }
 
   function renderProfitList() {
@@ -1010,7 +1120,7 @@
 
   /* ---------------- 区域折叠 ---------------- */
   var FOLD_KEY = "cost_calc_fold_v1";
-  var SECTION_IDS = ["sec-params", "sec-tiers", "sec-case", "sec-summary", "sec-chart", "sec-detail", "sec-profit"];
+  var SECTION_IDS = ["sec-params", "sec-tiers", "sec-case", "sec-summary", "sec-chart", "sec-detail", "sec-profit", "sec-price"];
 
   function readFold() {
     try {
@@ -1117,7 +1227,9 @@
     // 所有数字输入框禁用滚轮改值，避免滚动页面时误改参数（成本测算参数区）
     [
       "unitWeight", "baseCost", "count",
-      "casePacks", "caseWeight", "caseCost"
+      "casePacks", "caseWeight", "caseCost",
+      "lpPacks", "lpCost", "lpDiscount", "lpTargetRate",
+      "lpPlatformRate", "lpBlackRate", "lpSubsidyRate", "lpAccrualRate", "lpRefundRate"
     ].forEach(function (id) { stopWheel($(id)); });
 
     restoreLast();
@@ -1132,6 +1244,16 @@
       $(id).addEventListener("input", function () { renderCase(); render(); });
     });
     $("stackEnabled").addEventListener("change", render);
+
+    // 标价反推板块：手动改包数或成本 → 解除联动
+    ["lpPacks", "lpCost"].forEach(function (id) {
+      $(id).addEventListener("input", function () {
+        if (lpLinkedPacks != null) {
+          lpLinkedPacks = null;
+          renderLpLinkState();
+        }
+      });
+    });
 
     // 利润测算多实例：加载历史实例，没有则建一个默认实例
     var saved = loadProfitInstances();
@@ -1158,6 +1280,7 @@
     window.addDiscount = addDiscount;
     window.removeDiscount = removeDiscount;
     window.resetDiscounts = resetDiscounts;
+    window.runListPrice = runListPrice;
     window.toggleSection = toggleSection;
     window.toggleAllSections = toggleAllSections;
     window.saveScheme = saveScheme;
@@ -1181,6 +1304,7 @@
     renderCase();
     render();
     renderProfitList();
+    renderLpLinkState();
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);

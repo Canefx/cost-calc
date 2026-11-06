@@ -10,7 +10,7 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  var VERSION = "1.10.0";
+  var VERSION = "1.11.0";
   var EPS = 1e-9;
 
   var DEFAULT_TIERS = [
@@ -402,6 +402,28 @@
     return cost * (1 + totalRate - p * totalRate) / (1 - p);
   }
 
+  /** 反推标价（原价）：在「目标折扣」下卖出，仍要达到目标利润率 p，标价应为多少
+   *  设 折后价 = 标价 × 折扣率 d；结算价 = 折后价 − 成本×费比
+   *  由 利润率 = (结算价 − 成本) ÷ 结算价 推得
+   *  标价 = 成本 × (费比 + 1/(1−p)) ÷ 折扣率；p = 0 时为保本标价
+   */
+  function targetListPriceOf(cost, totalRate, discountRate, profitRate) {
+    if (cost == null || isNaN(cost) || cost <= 0) return null;
+    if (discountRate == null || isNaN(discountRate) || discountRate <= 0 || discountRate > 1) return null;
+    var p = (profitRate == null || isNaN(profitRate)) ? 0 : profitRate;
+    if (p >= 1) return null;
+    return cost * (totalRate + 1 / (1 - p)) / discountRate;
+  }
+
+  /** 归一化折扣输入：>1 视为「几折」（7 → 0.7），0~1 视为折扣率 */
+  function normalizeDiscount(v) {
+    var n = num(v);
+    if (isNaN(n) || n <= 0) return null;
+    if (n > 1 && n <= 10) n = n / 10;
+    if (n > 1 || n <= 0) return null;
+    return n;
+  }
+
   function num(v) {
     var n = typeof v === "number" ? v : parseFloat(String(v == null ? "" : v).replace(/[^0-9.\-]/g, ""));
     return isNaN(n) ? 0 : n;
@@ -451,6 +473,8 @@
     computeProfitRows: computeProfitRows,
     computeDiscountRows: computeDiscountRows,
     targetPriceOf: targetPriceOf,
+    targetListPriceOf: targetListPriceOf,
+    normalizeDiscount: normalizeDiscount,
     discountLabel: discountLabel,
     DISCOUNTS: DISCOUNTS,
     freightDetail: freightDetail,
