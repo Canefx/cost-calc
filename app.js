@@ -7,8 +7,8 @@
   var SCHEME_KEY = "cost_calc_schemes_v1";
 
   // 版本号：三个文件必须同版本，否则功能会缺失
-  var APP_VERSION = "1.13.0";
-  var CALC_VERSION = "1.13.0";
+  var APP_VERSION = "1.14.0";
+  var CALC_VERSION = "1.14.0";
 
   // 档位以「上限 + 运费」存储，起点由上一档上限推导
   var tiers = [];
@@ -497,62 +497,84 @@
     el.className = hidden ? "" : "hidden";
   }
 
+  /** 清空批量结果与提示 */
   function clearLpBulk() {
-    $("lpBulkText").value = "";
+    $("lpFileInfo").textContent = "";
     $("lpBulkResult").innerHTML = "";
-  }
-
-  /** 把测算明细里所有可算的行填入批量输入框 */
+    lpBulkCache = [];
+  }  /** 把测算明细里所有可算的行填入批量数据（并直接测算） */
   function fillLpBulkFromCost() {
     var rows = (rowsCache || []).filter(function (r) { return !r.over; });
     if (!rows.length) { alert("当前测算明细没有可用的行"); return; }
-    $("lpBulkText").value = rows.map(function (r) {
-      return r.packs + "," + C.money(r.costWith, 2);
-    }).join("\n");
-    $("lpBulk").className = "";
+    var items = rows.map(function (r) { return { packs: r.packs, cost: r.costWith, line: r.packs + "包" }; });
+    $("lpFileInfo").textContent = "已从测算明细带入 " + items.length + " 行（可直接下载样本或重新导入 Excel 覆盖）";
+    renderBulkResult(items);
   }
 
-  /** 解析批量文本：每行「包数,成本」，支持逗号/空格/Tab/顿号分隔 */
-  function parseBulkLines(text) {
-    var lines = String(text || "").split(/\r?\n/);
+  /** 从工作表行里解析出「包数, 成本」：自动识别表头、跳过空行 */
+  function parseSheetRows(rows) {
     var items = [];
     var errors = [];
-    lines.forEach(function (line, i) {
-      var raw = line.trim();
-      if (!raw) return;
-      // 去掉 Excel 复制可能带的引号与制表符
-      var parts = raw.replace(/"/g, "").split(/[\s,，、\t;]+/).filter(Boolean);
-      if (parts.length < 2) {
-        errors.push("第 " + (i + 1) + " 行「" + raw + "」缺少包数或成本");
-        return;
-      }
-      var packs = parseInt(parts[0], 10);
-      var cost = parseFloat(parts[1]);
-      if (!(packs > 0)) { errors.push("第 " + (i + 1) + " 行包数无效：" + parts[0]); return; }
-      if (isNaN(cost) || cost < 0) { errors.push("第 " + (i + 1) + " 行成本无效：" + parts[1]); return; }
+    (rows || []).forEach(function (row, i) {
+      if (!row || !row.length) return;
+      var c0 = String(row[0] == null ? "" : row[0]).trim();
+      var c1 = String(row[1] == null ? "" : row[1]).trim();
+      if (!c0 && !c1) return;                       // 空行跳过
+      if (i === 0 && /包|成本|数量|价格/.test(c0)) return; // 表头跳过
+      var packs = parseInt(String(c0).replace(/[^\d.-]/g, ""), 10);
+      var cost = parseFloat(String(c1).replace(/[^\d.-]/g, ""));
+      if (!(packs > 0)) { errors.push("第 " + (i + 1) + " 行包数无效：" + c0); return; }
+      if (isNaN(cost) || cost < 0) { errors.push("第 " + (i + 1) + " 行成本无效：" + c1); return; }
       items.push({ packs: packs, cost: cost, line: i + 1 });
     });
     return { items: items, errors: errors };
   }
 
+  /** 导入 Excel 文件 */
+  function importLpExcel(ev) {
+    var file = ev && ev.target && ev.target.files && ev.target.files[0];
+    if (!file) return;
+    var info = $("lpFileInfo");
+    info.textContent = "正在读取 " + file.name + " …";
+
+    var reader = new FileReader();
+    reader.onload = function () {
+      if (!window.Xlsx || typeof window.Xlsx.read !== "function") {
+        info.innerHTML = '<span style="color:#c0392b">xlsx.js 未加载，无法解析 Excel。请确认三个文件都已更新。</span>';
+        return;
+      }
+      window.Xlsx.read(new Uint8Array(reader.result)).then(function (rows) {
+        var parsed = parseSheetRows(rows);
+        if (!parsed.items.length) {
+          info.innerHTML = '<span style="color:#c0392b">没有读到有效数据。' +
+            (parsed.errors.length ? esc(parsed.errors[0]) : "请确认第一列是包数、第二列是成本。") + "</span>";
+          $("lpBulkResult").innerHTML = "";
+          return;
+        }
+        info.textContent = "已读取 " + file.name + "：" + parsed.items.length + " 行有效数据" +
+          (parsed.errors.length ? "，" + parsed.errors.length + " 行被跳过" : "");
+        renderBulkResult(parsed.items, parsed.errors);
+      }).catch(function (err) {
+        info.innerHTML = '<span style="color:#c0392b">读取失败：' + esc(err.message || err) +
+          "。若文件是老版 .xls，请另存为 .xlsx 再导入。</span>";
+      });
+    };
+    reader.onerror = function () { info.innerHTML = '<span style="color:#c0392b">文件读取失败</span>'; };
+    reader.readAsArrayBuffer(file);
+    ev.target.value = ""; // 允许重复选同一个文件
+  }
+
   var lpBulkCache = [];
 
-  function runListPriceBulk() {
+  /** 按当前配置批量计算并渲染 */
+  function renderBulkResult(items, parseErrors) {
     var out = $("lpBulkResult");
     if (!out) return;
     var cfg = lpInput();
-    var parsed = parseBulkLines($("lpBulkText").value);
-
-    if (!parsed.items.length) {
-      out.innerHTML = '<div class="stat">' +
-        (parsed.errors.length ? "没有可用的行：" + esc(parsed.errors[0]) : "请先在批量输入框填入「包数,成本」") +
-        "</div>";
-      return;
-    }
-
     var results = [];
-    var rowErrors = parsed.errors.slice();
-    parsed.items.forEach(function (it) {
+    var rowErrors = (parseErrors || []).slice();
+
+    items.forEach(function (it) {
       var r = computeListPriceRow(it.packs, it.cost, cfg);
       if (r.ok) results.push(r);
       else rowErrors.push("第 " + it.line + " 行：" + r.error);
@@ -591,13 +613,41 @@
       '<th class="num">结算价/元</th><th class="num">利润率</th><th class="num">保本ROI</th>' +
       "</tr></thead><tbody>" + body + "</tbody></table></div>" +
       '<div class="toolbar no-print" style="padding:0 12px 12px">' +
-      '<button class="small" onclick="exportLpBulkCsv()">导出 CSV</button>' +
+      '<button class="small" onclick="exportLpBulkCsv()">导出结果 CSV</button>' +
+      '<button class="small secondary" onclick="exportLpBulkExcel()">导出结果 Excel</button>' +
       "</div></div>" +
-      (rowErrors.length ? '<div class="err">有 ' + rowErrors.length + " 行被跳过：" + esc(rowErrors[0]) + "</div>" : "");
+      (rowErrors.length ? '<div class="err">有 ' + rowErrors.length + " 行被跳过：" +
+        esc(rowErrors.slice(0, 3).join("；")) + "</div>" : "");
+  }
+
+  /** 下载导入样本 Excel */
+  function downloadLpTemplate() {
+    if (!window.Xlsx || typeof window.Xlsx.build !== "function") {
+      alert("xlsx.js 未加载，无法生成样本");
+      return;
+    }
+    var rows = [
+      ["包数", "成本/含快递费"],
+      [20, 25.75],
+      [10, 13.9],
+      [40, 48.24],
+      [25, 31.82],
+      ["", ""],
+      ["填写说明：", ""],
+      ["第一列填包数（整数）", ""],
+      ["第二列填成本/含快递费（元）", ""],
+      ["第一行可为表头，会自动跳过", ""],
+      ["空行会被忽略", ""]
+    ];
+    var bytes = window.Xlsx.build(rows, "标价反推样本");
+    var blob = new Blob([bytes], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    });
+    downloadBlob("标价反推-导入样本.xlsx", blob);
   }
 
   function exportLpBulkCsv() {
-    if (!lpBulkCache.length) return alert("请先执行批量反推");
+    if (!lpBulkCache.length) return alert("请先导入 Excel 或带入数据");
     var head = ["包数", "成本/元", "有效成本/元", "需定价/元", "单包定价/元",
       "折后售价/元", "结算价/元", "利润率", "保本ROI"];
     var lines = [head.join(",")];
@@ -608,7 +658,27 @@
         r.roi == null ? "—" : r.roi.toFixed(2)
       ].join(","));
     });
-    download("标价反推-" + stamp() + ".csv", "\uFEFF" + lines.join("\r\n"), "text/csv;charset=utf-8");
+    download("标价反推结果-" + stamp() + ".csv", "\uFEFF" + lines.join("\r\n"), "text/csv;charset=utf-8");
+  }
+
+  function exportLpBulkExcel() {
+    if (!lpBulkCache.length) return alert("请先导入 Excel 或带入数据");
+    if (!window.Xlsx || typeof window.Xlsx.build !== "function") return alert("xlsx.js 未加载");
+    var rows = [[
+      "包数", "成本/元", "有效成本/元", "需定价/元", "单包定价/元",
+      "折后售价/元", "结算价/元", "利润率", "保本ROI"
+    ]];
+    lpBulkCache.forEach(function (r) {
+      rows.push([
+        r.packs, Number(m2(r.cost)), Number(m2(r.effectiveCost)), Number(m2(r.listPrice)),
+        Number(m2(r.unitList)), Number(m2(r.salePrice)), Number(m2(r.settlement)),
+        pct(r.profitRate), r.roi == null ? "—" : r.roi.toFixed(2)
+      ]);
+    });
+    var blob = new Blob([window.Xlsx.build(rows, "标价反推结果")], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    });
+    downloadBlob("标价反推结果-" + stamp() + ".xlsx", blob);
   }
 
   function renderProfitList() {
@@ -1078,8 +1148,7 @@
     });
   }
 
-  function download(filename, content, mime) {
-    var blob = new Blob([content], { type: mime });
+  function downloadBlob(filename, blob) {
     var a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = filename;
@@ -1087,6 +1156,10 @@
     a.click();
     document.body.removeChild(a);
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 1500);
+  }
+
+  function download(filename, content, mime) {
+    downloadBlob(filename, new Blob([content], { type: mime }));
   }
 
   function stamp() {
@@ -1432,10 +1505,12 @@
     window.resetDiscounts = resetDiscounts;
     window.runListPrice = runListPrice;
     window.toggleLpBulk = toggleLpBulk;
-    window.runListPriceBulk = runListPriceBulk;
+    window.importLpExcel = importLpExcel;
+    window.downloadLpTemplate = downloadLpTemplate;
     window.fillLpBulkFromCost = fillLpBulkFromCost;
     window.clearLpBulk = clearLpBulk;
     window.exportLpBulkCsv = exportLpBulkCsv;
+    window.exportLpBulkExcel = exportLpBulkExcel;
     window.toggleSection = toggleSection;
     window.toggleAllSections = toggleAllSections;
     window.saveScheme = saveScheme;
