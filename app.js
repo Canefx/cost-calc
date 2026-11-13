@@ -7,8 +7,8 @@
   var SCHEME_KEY = "cost_calc_schemes_v1";
 
   // 版本号：三个文件必须同版本，否则功能会缺失
-  var APP_VERSION = "1.12.0";
-  var CALC_VERSION = "1.12.0";
+  var APP_VERSION = "1.13.0";
+  var CALC_VERSION = "1.13.0";
 
   // 档位以「上限 + 运费」存储，起点由上一档上限推导
   var tiers = [];
@@ -402,74 +402,213 @@
       : "独立填写；点击上方「测算明细」某一行可带入包数与成本";
   }
 
-  function runListPrice() {
-    var input = lpInput();
-    var packs = parseInt(input.packs, 10);
-    var cost = parseFloat(input.cost);
-    var discount = C.normalizeDiscount(input.discount);
-    var targetRate = input.targetRate === "" || input.targetRate == null ? 0 : parseFloat(input.targetRate);
-    var sum = C.profitSummary({
-      platformRate: input.platformRate,
-      blackRate: input.blackRate,
-      subsidyRate: input.subsidyRate,
-      accrualRate: input.accrualRate
-    });
-
-    var out = $("lpResult");
-    if (!out) return;
-
+  /** 单行标价反推：抽取出来供单条与批量共用
+   *  返回 { ok:true, listPrice, salePrice, settlement, profitAmount, profitRate, roi, effectiveCost, unitList, unitSale, discount, sum, packs, cost }
+   *  或 { ok:false, error }
+   */
+  function computeListPriceRow(packs, cost, cfg) {
     if (!(packs > 0) || isNaN(cost) || cost < 0) {
-      out.innerHTML = '<div class="stat">请填写包数与成本，或点击上方「测算明细」某一行带入</div>';
-      return;
+      return { ok: false, error: "包数与成本无效" };
     }
+    var discount = C.normalizeDiscount(cfg.discount);
     if (discount == null) {
-      out.innerHTML = '<div class="stat">请填写目标折扣（0.01~10，如 7 表示 7 折）</div>';
-      return;
+      return { ok: false, error: "目标折扣需在 0.01~10 之间（如 7 表示 7 折）" };
     }
+    var targetRate = cfg.targetRate === "" || cfg.targetRate == null ? 0 : parseFloat(cfg.targetRate);
     if (isNaN(targetRate) || targetRate < 0 || targetRate >= 100) {
-      out.innerHTML = '<div class="stat">目标利润率需在 0~100 之间（留空表示保本）</div>';
-      return;
+      return { ok: false, error: "目标利润率需在 0~100 之间" };
     }
+    var sum = C.profitSummary({
+      platformRate: cfg.platformRate,
+      blackRate: cfg.blackRate,
+      subsidyRate: cfg.subsidyRate,
+      accrualRate: cfg.accrualRate
+    });
+    var effectiveCost = C.effectiveCostOf(cost, C.num(cfg.refundRate));
+    if (effectiveCost == null) return { ok: false, error: "退款率需小于 100%" };
 
     var p = targetRate / 100;
-    var effectiveCost = C.effectiveCostOf(cost, C.num(input.refundRate));
-    if (effectiveCost == null) {
-      out.innerHTML = '<div class="stat">退款率需小于 100%</div>';
-      return;
-    }
     var listPrice = C.targetListPriceOf(effectiveCost, sum.totalRate, discount, p);
-    if (listPrice == null) {
-      out.innerHTML = '<div class="stat">无法计算，请检查输入</div>';
-      return;
-    }
-    var salePrice = listPrice * discount;      // 折后价
+    if (listPrice == null) return { ok: false, error: "无法计算，请检查输入" };
+
+    var salePrice = listPrice * discount;
     var settlement = salePrice - effectiveCost * sum.totalRate;
     var profitAmount = settlement - effectiveCost;
     var profitRate = settlement > 0 ? (settlement - effectiveCost) / settlement : null;
-    var keep = 1 - C.num(input.refundRate) / 100;
+    var keep = 1 - C.num(cfg.refundRate) / 100;
     var roi = (profitRate != null && profitRate > 0 && keep > 0) ? 1 / profitRate / keep : null;
-    var unitList = packs > 0 ? listPrice / packs : null;
-    var unitSale = packs > 0 ? salePrice / packs : null;
 
-    var rateTxt = (targetRate > 0) ? (targetRate.toFixed(2) + "%") : "保本";
-    var loss = profitRate != null && profitRate < 0;
+    return {
+      ok: true,
+      packs: packs,
+      cost: cost,
+      effectiveCost: effectiveCost,
+      discount: discount,
+      targetRate: targetRate,
+      sum: sum,
+      listPrice: listPrice,
+      salePrice: salePrice,
+      settlement: settlement,
+      profitAmount: profitAmount,
+      profitRate: profitRate,
+      roi: roi,
+      unitList: packs > 0 ? listPrice / packs : null,
+      unitSale: packs > 0 ? salePrice / packs : null
+    };
+  }
+
+  function runListPrice() {
+    var input = lpInput();
+    var out = $("lpResult");
+    if (!out) return;
+
+    var r = computeListPriceRow(parseInt(input.packs, 10), parseFloat(input.cost), input);
+    if (!r.ok) {
+      out.innerHTML = '<div class="stat">' + esc(r.error) + "</div>";
+      return;
+    }
+    var loss = r.profitRate != null && r.profitRate < 0;
+    var rateTxt = (r.targetRate > 0) ? (r.targetRate.toFixed(2) + "%") : "保本";
 
     out.innerHTML =
       '<div class="stat-row">' +
-      stat("需定价（原价）", m2(listPrice) + " 元", "单包 " + m2(unitList) + " 元") +
-      stat("折后售价（" + C.discountLabel(discount) + "）", m2(salePrice) + " 元", "单包 " + m2(unitSale) + " 元") +
-      stat("目标利润率", rateTxt, "目标折扣 " + C.discountLabel(discount) + " 下达成") +
-      stat("有效成本", m2(effectiveCost) + " 元", "成本 " + m2(cost) + " ÷ (1 − 退款率 " + pct(C.num(input.refundRate) / 100) + ")") +
-      stat("结算价", m2(settlement) + " 元", "折后价 − 有效成本 × 合计费比 " + pct(sum.totalRate)) +
-      stat("单包利润", m2(profitAmount / packs) + " 元", "合计利润 " + m2(profitAmount) + " 元") +
-      stat("实际利润率", pct(profitRate), loss ? "低于成本，亏损" : "按当前定价计算") +
-      stat("保本 ROI", roi == null ? "—" : roi.toFixed(2), "退款率 " + pct(C.num(input.refundRate) / 100)) +
+      stat("需定价（原价）", m2(r.listPrice) + " 元", "单包 " + m2(r.unitList) + " 元") +
+      stat("折后售价（" + C.discountLabel(r.discount) + "）", m2(r.salePrice) + " 元", "单包 " + m2(r.unitSale) + " 元") +
+      stat("目标利润率", rateTxt, "目标折扣 " + C.discountLabel(r.discount) + " 下达成") +
+      stat("有效成本", m2(r.effectiveCost) + " 元", "成本 " + m2(r.cost) + " ÷ (1 − 退款率 " + pct(C.num(input.refundRate) / 100) + ")") +
+      stat("结算价", m2(r.settlement) + " 元", "折后价 − 有效成本 × 合计费比 " + pct(r.sum.totalRate)) +
+      stat("单包利润", m2(r.profitAmount / r.packs) + " 元", "合计利润 " + m2(r.profitAmount) + " 元") +
+      stat("实际利润率", pct(r.profitRate), loss ? "低于成本，亏损" : "按当前定价计算") +
+      stat("保本 ROI", r.roi == null ? "—" : r.roi.toFixed(2), "退款率 " + pct(C.num(input.refundRate) / 100)) +
       "</div>" +
       '<div class="hint" style="margin-top:10px">' +
-      "含百补综合扣点 " + pct(sum.combinedSubsidy) + "，计提费比 " + pct(C.num(input.accrualRate) / 100) +
-      "，合计费比 " + pct(sum.totalRate) + "，退款率 " + pct(C.num(input.refundRate) / 100) +
+      "含百补综合扣点 " + pct(r.sum.combinedSubsidy) + "，计提费比 " + pct(C.num(input.accrualRate) / 100) +
+      "，合计费比 " + pct(r.sum.totalRate) + "，退款率 " + pct(C.num(input.refundRate) / 100) +
       "；有效成本 = 成本 ÷ (1−退款率)；标价 = 有效成本 × (费比 + 1÷(1−利润率)) ÷ 折扣率。" +
       "</div>";
+  }
+
+  /* ---------------- 标价反推：批量 ---------------- */
+
+  function toggleLpBulk() {
+    var el = $("lpBulk");
+    if (!el) return;
+    var hidden = (" " + el.className + " ").indexOf(" hidden ") >= 0;
+    el.className = hidden ? "" : "hidden";
+  }
+
+  function clearLpBulk() {
+    $("lpBulkText").value = "";
+    $("lpBulkResult").innerHTML = "";
+  }
+
+  /** 把测算明细里所有可算的行填入批量输入框 */
+  function fillLpBulkFromCost() {
+    var rows = (rowsCache || []).filter(function (r) { return !r.over; });
+    if (!rows.length) { alert("当前测算明细没有可用的行"); return; }
+    $("lpBulkText").value = rows.map(function (r) {
+      return r.packs + "," + C.money(r.costWith, 2);
+    }).join("\n");
+    $("lpBulk").className = "";
+  }
+
+  /** 解析批量文本：每行「包数,成本」，支持逗号/空格/Tab/顿号分隔 */
+  function parseBulkLines(text) {
+    var lines = String(text || "").split(/\r?\n/);
+    var items = [];
+    var errors = [];
+    lines.forEach(function (line, i) {
+      var raw = line.trim();
+      if (!raw) return;
+      // 去掉 Excel 复制可能带的引号与制表符
+      var parts = raw.replace(/"/g, "").split(/[\s,，、\t;]+/).filter(Boolean);
+      if (parts.length < 2) {
+        errors.push("第 " + (i + 1) + " 行「" + raw + "」缺少包数或成本");
+        return;
+      }
+      var packs = parseInt(parts[0], 10);
+      var cost = parseFloat(parts[1]);
+      if (!(packs > 0)) { errors.push("第 " + (i + 1) + " 行包数无效：" + parts[0]); return; }
+      if (isNaN(cost) || cost < 0) { errors.push("第 " + (i + 1) + " 行成本无效：" + parts[1]); return; }
+      items.push({ packs: packs, cost: cost, line: i + 1 });
+    });
+    return { items: items, errors: errors };
+  }
+
+  var lpBulkCache = [];
+
+  function runListPriceBulk() {
+    var out = $("lpBulkResult");
+    if (!out) return;
+    var cfg = lpInput();
+    var parsed = parseBulkLines($("lpBulkText").value);
+
+    if (!parsed.items.length) {
+      out.innerHTML = '<div class="stat">' +
+        (parsed.errors.length ? "没有可用的行：" + esc(parsed.errors[0]) : "请先在批量输入框填入「包数,成本」") +
+        "</div>";
+      return;
+    }
+
+    var results = [];
+    var rowErrors = parsed.errors.slice();
+    parsed.items.forEach(function (it) {
+      var r = computeListPriceRow(it.packs, it.cost, cfg);
+      if (r.ok) results.push(r);
+      else rowErrors.push("第 " + it.line + " 行：" + r.error);
+    });
+
+    lpBulkCache = results;
+    if (!results.length) {
+      out.innerHTML = '<div class="stat">全部行都无法计算：' + esc(rowErrors[0] || "") + "</div>";
+      return;
+    }
+
+    var body = results.map(function (r) {
+      var cls = r.profitRate != null && r.profitRate < 0 ? "loss" : "";
+      return '<tr class="' + cls + '">' +
+        '<td class="num">' + r.packs + "</td>" +
+        '<td class="num">' + m2(r.cost) + "</td>" +
+        '<td class="num">' + m2(r.effectiveCost) + "</td>" +
+        '<td class="num">' + m2(r.listPrice) + "</td>" +
+        '<td class="num">' + m2(r.unitList) + "</td>" +
+        '<td class="num">' + m2(r.salePrice) + "</td>" +
+        '<td class="num">' + m2(r.settlement) + "</td>" +
+        '<td class="num">' + pct(r.profitRate) + "</td>" +
+        '<td class="num">' + (r.roi == null ? "—" : r.roi.toFixed(2)) + "</td>" +
+        "</tr>";
+    }).join("");
+
+    out.innerHTML =
+      '<div class="profit-block" style="margin-top:14px">' +
+      '<div class="profit-head">批量反推 <span class="sub">' + results.length + " 行 · " +
+      "折扣 " + C.discountLabel(results[0].discount) +
+      " · 目标 " + (results[0].targetRate > 0 ? results[0].targetRate.toFixed(2) + "%" : "保本") +
+      "</span></div>" +
+      '<div class="table-wrap"><table><thead><tr>' +
+      '<th class="num">包数</th><th class="num">成本/元</th><th class="num">有效成本/元</th>' +
+      '<th class="num">需定价/元</th><th class="num">单包定价/元</th><th class="num">折后售价/元</th>' +
+      '<th class="num">结算价/元</th><th class="num">利润率</th><th class="num">保本ROI</th>' +
+      "</tr></thead><tbody>" + body + "</tbody></table></div>" +
+      '<div class="toolbar no-print" style="padding:0 12px 12px">' +
+      '<button class="small" onclick="exportLpBulkCsv()">导出 CSV</button>' +
+      "</div></div>" +
+      (rowErrors.length ? '<div class="err">有 ' + rowErrors.length + " 行被跳过：" + esc(rowErrors[0]) + "</div>" : "");
+  }
+
+  function exportLpBulkCsv() {
+    if (!lpBulkCache.length) return alert("请先执行批量反推");
+    var head = ["包数", "成本/元", "有效成本/元", "需定价/元", "单包定价/元",
+      "折后售价/元", "结算价/元", "利润率", "保本ROI"];
+    var lines = [head.join(",")];
+    lpBulkCache.forEach(function (r) {
+      lines.push([
+        r.packs, m2(r.cost), m2(r.effectiveCost), m2(r.listPrice), m2(r.unitList),
+        m2(r.salePrice), m2(r.settlement), pct(r.profitRate),
+        r.roi == null ? "—" : r.roi.toFixed(2)
+      ].join(","));
+    });
+    download("标价反推-" + stamp() + ".csv", "\uFEFF" + lines.join("\r\n"), "text/csv;charset=utf-8");
   }
 
   function renderProfitList() {
@@ -1292,6 +1431,11 @@
     window.removeDiscount = removeDiscount;
     window.resetDiscounts = resetDiscounts;
     window.runListPrice = runListPrice;
+    window.toggleLpBulk = toggleLpBulk;
+    window.runListPriceBulk = runListPriceBulk;
+    window.fillLpBulkFromCost = fillLpBulkFromCost;
+    window.clearLpBulk = clearLpBulk;
+    window.exportLpBulkCsv = exportLpBulkCsv;
     window.toggleSection = toggleSection;
     window.toggleAllSections = toggleAllSections;
     window.saveScheme = saveScheme;
